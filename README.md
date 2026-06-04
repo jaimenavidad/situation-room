@@ -19,6 +19,7 @@ Aplicacion web interna para gestionar un `Mapa de Compromisos de Proyectos` con 
 - Vista resumen con tarjetas por salud
 - Ficha individual editable
 - Bitacora de comentarios con estado resuelto
+- Importador PDF para crear proyectos desde exports de Notion
 - Persistencia automatica con Netlify Blobs
 - Cache local de resiliencia para desarrollo y fallos temporales de red
 
@@ -75,7 +76,9 @@ src/
   data/sampleProjects.js
   index.css
 netlify/functions/
+  _shared/project-pdf-parser.js
   projects-get.js
+  projects-import-pdf.js
   projects-save.js
 netlify.toml
 vite.config.js
@@ -85,7 +88,9 @@ vite.config.js
 - `src/data/sampleProjects.js`: semilla local vacia.
 - `src/index.css`: tipografia, tokens visuales y estilos auxiliares sobre Tailwind.
 - `netlify/functions/projects-get.js`: lee la coleccion completa desde Netlify Blobs.
+- `netlify/functions/projects-import-pdf.js`: extrae texto de PDFs de Notion y devuelve un borrador editable de proyecto.
 - `netlify/functions/projects-save.js`: guarda la coleccion completa en Netlify Blobs.
+- `netlify/functions/_shared/project-pdf-parser.js`: normaliza campos del PDF al modelo de Situation Room.
 - `netlify.toml`: redirect SPA para Netlify.
 - `vite.config.js`: configuracion de Vite con React, Tailwind y el plugin de Netlify para emular Functions/Blobs en local.
 

@@ -6,6 +6,7 @@ const CACHE_KEY = 'situation-room-projects-cache-v1'
 const LEGACY_STORAGE_KEY = 'situation-room-projects-v2'
 const PROJECTS_GET_ENDPOINT = '/.netlify/functions/projects-get'
 const PROJECTS_SAVE_ENDPOINT = '/.netlify/functions/projects-save'
+const PROJECTS_PDF_IMPORT_ENDPOINT = '/.netlify/functions/projects-import-pdf'
 const SAVE_DEBOUNCE_MS = 600
 
 const initiativeOptions = [
@@ -47,6 +48,12 @@ const healthToControlTone = {
   Verde: 'Estable',
   Amarillo: 'Seguimiento',
   Rojo: 'Alerta',
+}
+
+const confidenceToneClasses = {
+  Alta: 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200',
+  Media: 'bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-200',
+  Baja: 'bg-slate-100 text-slate-600 ring-1 ring-inset ring-slate-200',
 }
 
 const legacyInitiativeMap = {
@@ -227,6 +234,119 @@ const saveProjectsToRemote = async (projects, options = {}) => {
   }
 
   return response.json()
+}
+
+const fileToBase64 = (file) =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = String(reader.result || '')
+      resolve(result.includes(',') ? result.split(',')[1] : result)
+    }
+    reader.onerror = () => reject(new Error('No se pudo leer el archivo PDF'))
+    reader.readAsDataURL(file)
+  })
+
+const importProjectPdfFromFile = async (file) => {
+  const fileBase64 = await fileToBase64(file)
+  const response = await fetch(PROJECTS_PDF_IMPORT_ENDPOINT, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      fileName: file.name,
+      fileBase64,
+    }),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Error importando PDF (${response.status})`)
+  }
+
+  return response.json()
+}
+
+const createImportDraft = (draft = {}) => {
+  const base = emptyProject()
+
+  return {
+    ...base,
+    ...draft,
+    name: draft.name || '',
+    client: draft.client || '',
+    description: draft.description || '',
+    startDate: draft.startDate || '',
+    endDate: draft.endDate || '',
+    budgetedHours: draft.budgetedHours ?? '',
+    currentHours: draft.currentHours ?? '',
+    nextMilestone: draft.nextMilestone || '',
+    nextMilestoneDate: draft.nextMilestoneDate || '',
+    controlSummary: draft.controlSummary || '',
+    mainRisk: draft.mainRisk || '',
+    currentObjective: draft.currentObjective || '',
+    technologiesUsed: Array.isArray(draft.technologiesUsed) ? draft.technologiesUsed : [],
+    replacementWatch: draft.replacementWatch || '',
+    alertsAndRisks: draft.alertsAndRisks || '',
+    openDecisions: draft.openDecisions || '',
+    internalComments: draft.internalComments || '',
+    clientContact: {
+      ...base.clientContact,
+      ...draft.clientContact,
+    },
+    teamAssigned: Array.isArray(draft.teamAssigned)
+      ? draft.teamAssigned.map((member) => ({
+          id: member.id || crypto.randomUUID(),
+          role: member.role || '',
+          name: member.name || '',
+          dedication: member.dedication || '',
+        }))
+      : [],
+    importantMeetings: Array.isArray(draft.importantMeetings)
+      ? draft.importantMeetings.map((meeting) => ({
+          id: meeting.id || crypto.randomUUID(),
+          title: meeting.title || '',
+          date: meeting.date || '',
+          participants: meeting.participants || '',
+          objective: meeting.objective || '',
+        }))
+      : [],
+    commentLog: [],
+  }
+}
+
+const createProjectFromImportDraft = (draft) => {
+  const base = emptyProject()
+
+  return {
+    ...base,
+    ...draft,
+    id: crypto.randomUUID(),
+    lastUpdated: new Date().toISOString(),
+    name: draft.name || base.name,
+    clientContact: {
+      ...base.clientContact,
+      ...draft.clientContact,
+    },
+    technologiesUsed: Array.isArray(draft.technologiesUsed) ? draft.technologiesUsed : [],
+    teamAssigned: Array.isArray(draft.teamAssigned)
+      ? draft.teamAssigned.map((member) => ({
+          id: member.id || crypto.randomUUID(),
+          role: member.role || '',
+          name: member.name || '',
+          dedication: member.dedication || '',
+        }))
+      : [],
+    importantMeetings: Array.isArray(draft.importantMeetings)
+      ? draft.importantMeetings.map((meeting) => ({
+          id: meeting.id || crypto.randomUUID(),
+          title: meeting.title || '',
+          date: meeting.date || '',
+          participants: meeting.participants || '',
+          objective: meeting.objective || '',
+        }))
+      : [],
+  }
 }
 
 const formatDate = (value, options = {}) => {
@@ -449,11 +569,21 @@ function App() {
   const [selectedProjectId, setSelectedProjectId] = useState(() => parseCachedProjects()[0]?.id ?? '')
   const [activeTab, setActiveTab] = useState('portfolio')
   const [isDossierClosing, setIsDossierClosing] = useState(false)
+  const [isPdfImportOpen, setIsPdfImportOpen] = useState(false)
   const [healthFilter, setHealthFilter] = useState('Todos')
   const [initiativeFilter, setInitiativeFilter] = useState('Todos')
   const [searchQuery, setSearchQuery] = useState('')
   const [pendingComment, setPendingComment] = useState('')
   const [isInitialLoading, setIsInitialLoading] = useState(true)
+  const [pdfImportState, setPdfImportState] = useState({
+    fileName: '',
+    isParsing: false,
+    error: '',
+    draft: null,
+    confidenceByField: {},
+    missingFields: [],
+    parserMeta: null,
+  })
   const dossierCloseTimeoutRef = useRef(null)
   const saveTimeoutRef = useRef(null)
   const hasLoadedRemoteRef = useRef(false)
@@ -591,11 +721,11 @@ function App() {
   }, [])
 
   useEffect(() => {
-    document.body.style.overflow = activeTab === 'detail' ? 'hidden' : ''
+    document.body.style.overflow = activeTab === 'detail' || isPdfImportOpen ? 'hidden' : ''
     return () => {
       document.body.style.overflow = ''
     }
-  }, [activeTab])
+  }, [activeTab, isPdfImportOpen])
 
   useEffect(() => {
     return () => {
@@ -714,6 +844,149 @@ function App() {
     setActiveTab('detail')
   }
 
+  const openPdfImport = () => {
+    setPdfImportState({
+      fileName: '',
+      isParsing: false,
+      error: '',
+      draft: null,
+      confidenceByField: {},
+      missingFields: [],
+      parserMeta: null,
+    })
+    setIsPdfImportOpen(true)
+  }
+
+  const closePdfImport = () => {
+    if (pdfImportState.isParsing) {
+      return
+    }
+
+    setIsPdfImportOpen(false)
+  }
+
+  const handlePdfImportFile = async (file) => {
+    if (!file) {
+      return
+    }
+
+    setPdfImportState({
+      fileName: file.name,
+      isParsing: true,
+      error: '',
+      draft: null,
+      confidenceByField: {},
+      missingFields: [],
+      parserMeta: null,
+    })
+
+    try {
+      const payload = await importProjectPdfFromFile(file)
+      setPdfImportState({
+        fileName: payload.fileName || file.name,
+        isParsing: false,
+        error: '',
+        draft: createImportDraft(payload.projectDraft),
+        confidenceByField: payload.confidenceByField || {},
+        missingFields: Array.isArray(payload.missingFields) ? payload.missingFields : [],
+        parserMeta: payload.parserMeta || null,
+      })
+    } catch (error) {
+      setPdfImportState({
+        fileName: file.name,
+        isParsing: false,
+        error: error instanceof Error ? error.message : 'No se pudo analizar el PDF',
+        draft: null,
+        confidenceByField: {},
+        missingFields: [],
+        parserMeta: null,
+      })
+    }
+  }
+
+  const updatePdfImportDraft = (updater) => {
+    setPdfImportState((current) => {
+      if (!current.draft) {
+        return current
+      }
+
+      return {
+        ...current,
+        draft: typeof updater === 'function' ? updater(current.draft) : updater,
+      }
+    })
+  }
+
+  const updatePdfImportField = (field, value) => {
+    updatePdfImportDraft((draft) => ({ ...draft, [field]: value }))
+  }
+
+  const updatePdfImportNestedField = (field, key, value) => {
+    updatePdfImportDraft((draft) => ({
+      ...draft,
+      [field]: {
+        ...draft[field],
+        [key]: value,
+      },
+    }))
+  }
+
+  const updatePdfImportListItem = (listName, itemId, field, value) => {
+    updatePdfImportDraft((draft) => ({
+      ...draft,
+      [listName]: draft[listName].map((item) => (item.id === itemId ? { ...item, [field]: value } : item)),
+    }))
+  }
+
+  const addPdfImportListItem = (listName, template) => {
+    updatePdfImportDraft((draft) => ({
+      ...draft,
+      [listName]: [...draft[listName], { id: crypto.randomUUID(), ...template }],
+    }))
+  }
+
+  const removePdfImportListItem = (listName, itemId) => {
+    updatePdfImportDraft((draft) => ({
+      ...draft,
+      [listName]: draft[listName].filter((item) => item.id !== itemId),
+    }))
+  }
+
+  const addPdfImportTag = (fieldName, value) => {
+    const normalizedValue = value.trim()
+
+    if (!normalizedValue) {
+      return
+    }
+
+    updatePdfImportDraft((draft) => ({
+      ...draft,
+      [fieldName]: [...new Set([...(draft[fieldName] || []), normalizedValue])],
+    }))
+  }
+
+  const removePdfImportTag = (fieldName, value) => {
+    updatePdfImportDraft((draft) => ({
+      ...draft,
+      [fieldName]: (draft[fieldName] || []).filter((item) => item !== value),
+    }))
+  }
+
+  const confirmPdfImport = () => {
+    if (!pdfImportState.draft) {
+      return
+    }
+
+    hasUserMutatedProjectsRef.current = true
+    const importedProject = createProjectFromImportDraft(pdfImportState.draft)
+
+    setProjects((currentProjects) => sortProjectsByMilestone([importedProject, ...currentProjects]))
+    setSelectedProjectId(importedProject.id)
+    setIsDossierClosing(false)
+    setActiveTab('detail')
+    setIsPdfImportOpen(false)
+  }
+
   const addComment = () => {
     if (!selectedProject || !pendingComment.trim()) {
       return
@@ -789,6 +1062,13 @@ function App() {
                 <TabButton active={activeTab === 'portfolio'} label="Portafolio" onClick={() => setActiveTab('portfolio')} />
                 <TabButton active={activeTab === 'detail'} label="Nuevo proyecto" onClick={addProject} />
               </div>
+              <button
+                className="rounded-full bg-white/70 px-4 py-2 text-sm font-medium text-[#000083] ring-1 ring-inset ring-[#bfd9ff] transition hover:bg-white"
+                type="button"
+                onClick={openPdfImport}
+              >
+                Importar PDF
+              </button>
             </div>
           </div>
 
@@ -843,6 +1123,22 @@ function App() {
           setPendingComment={setPendingComment}
           onAddComment={addComment}
           onToggleCommentResolved={toggleCommentResolved}
+        />
+      ) : null}
+
+      {isPdfImportOpen ? (
+        <PdfImportModal
+          state={pdfImportState}
+          onClose={closePdfImport}
+          onFileSelected={handlePdfImportFile}
+          onFieldChange={updatePdfImportField}
+          onNestedFieldChange={updatePdfImportNestedField}
+          onListItemChange={updatePdfImportListItem}
+          onAddListItem={addPdfImportListItem}
+          onRemoveListItem={removePdfImportListItem}
+          onAddTagItem={addPdfImportTag}
+          onRemoveTagItem={removePdfImportTag}
+          onConfirm={confirmPdfImport}
         />
       ) : null}
     </div>
@@ -1307,6 +1603,367 @@ function HoursConsumptionDonut({ budgetedHours, currentHours, size = 78, strokeW
       strokeWidth={strokeWidth}
       caption="hours"
     />
+  )
+}
+
+function PdfImportModal({
+  state,
+  onClose,
+  onFileSelected,
+  onFieldChange,
+  onNestedFieldChange,
+  onListItemChange,
+  onAddListItem,
+  onRemoveListItem,
+  onAddTagItem,
+  onRemoveTagItem,
+  onConfirm,
+}) {
+  const [technologyTagDraft, setTechnologyTagDraft] = useState('')
+  const draft = state.draft
+  const confidenceByField = state.confidenceByField || {}
+  const parserMeta = state.parserMeta || {}
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center px-4 py-4 sm:px-6 sm:py-6 lg:px-10 lg:py-8 modal-overlay-enter">
+      <button aria-label="Cerrar importador PDF" className="modal-backdrop absolute inset-0" type="button" onClick={onClose} />
+
+      <div className="modal-shell modal-shell-enter relative z-10 w-full max-w-4xl">
+        <div className="pointer-events-none absolute inset-x-10 top-0 z-0 h-24 rounded-full bg-[radial-gradient(circle,_rgba(2,59,253,0.18),_rgba(255,255,255,0)_72%)] blur-3xl" />
+
+        <div className="relative z-20 mb-3 flex justify-end">
+          <button
+            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/60 bg-white/72 text-xl leading-none text-[#000083] shadow-[0_14px_34px_rgba(2,59,253,0.16)] backdrop-blur-xl transition hover:bg-white"
+            type="button"
+            onClick={onClose}
+          >
+            ×
+          </button>
+        </div>
+
+        <div className="modal-frame relative overflow-hidden rounded-[2.25rem]">
+          <div className="dossier-scroll max-h-[calc(100vh-6rem)] overflow-y-auto">
+            <div className="glass-panel rounded-[2rem] border-white/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.78),rgba(243,248,255,0.72))] p-4 shadow-[0_30px_90px_rgba(2,59,253,0.18)] backdrop-blur-[26px] sm:p-5">
+              <div className="mb-3 flex flex-col gap-3 border-b border-[#bfd9ff] pb-3 sm:flex-row sm:items-end sm:justify-between">
+                <div>
+                  <p className="text-[11px] uppercase tracking-[0.22em] text-[#023BFD]/70">Importador PDF</p>
+                  <h2 className="font-display text-[1.45rem] leading-tight text-[#000083]">Crear proyecto desde documento Notion</h2>
+                  <p className="mt-1 text-[13px] text-slate-700">
+                    Sube un PDF por proyecto. La app extrae y prellena los campos para que solo confirmes o ajustes lo necesario.
+                  </p>
+                </div>
+
+                <label className="inline-flex cursor-pointer items-center justify-center rounded-full bg-[#023BFD] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#1054FF]">
+                  Seleccionar PDF
+                  <input
+                    accept="application/pdf"
+                    className="hidden"
+                    type="file"
+                    onChange={(event) => {
+                      const file = event.target.files?.[0]
+                      if (file) {
+                        onFileSelected(file)
+                        event.target.value = ''
+                      }
+                    }}
+                  />
+                </label>
+              </div>
+
+              <div className="space-y-3">
+                <SectionCard title="Estado de importacion">
+                  <div className="grid gap-2.5 md:grid-cols-[minmax(0,1fr)_auto_auto]">
+                    <div className="rounded-[1rem] border border-[#bfd9ff] bg-white/70 px-3.5 py-3">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#023BFD]/70">Archivo</p>
+                      <p className="mt-1.5 text-sm font-medium text-[#000083]">{state.fileName || 'Aun no has seleccionado un PDF.'}</p>
+                    </div>
+                    <div className="rounded-[1rem] border border-[#bfd9ff] bg-white/70 px-3.5 py-3">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#023BFD]/70">Extraccion</p>
+                      <p className="mt-1.5 text-sm font-medium text-[#000083]">
+                        {state.isParsing ? 'Analizando PDF...' : draft ? 'Borrador listo' : 'Pendiente'}
+                      </p>
+                    </div>
+                    <div className="rounded-[1rem] border border-[#bfd9ff] bg-white/70 px-3.5 py-3">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#023BFD]/70">Campos faltantes</p>
+                      <p className="mt-1.5 text-sm font-medium text-[#000083]">{state.missingFields.length}</p>
+                    </div>
+                  </div>
+
+                  {state.error ? (
+                    <p className="rounded-[0.95rem] border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{state.error}</p>
+                  ) : null}
+
+                  {parserMeta.detectedSections?.length ? (
+                    <div className="rounded-[1rem] border border-[#bfd9ff] bg-white/70 px-3.5 py-3">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#023BFD]/70">Secciones detectadas</p>
+                      <div className="mt-1.5 flex flex-wrap gap-1.5">
+                        {parserMeta.detectedSections.map((section) => (
+                          <span key={section} className="rounded-full bg-[#edf4ff] px-2 py-0.5 text-[11px] font-medium text-[#294b91]">
+                            {section}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {state.missingFields.length ? (
+                    <div className="rounded-[1rem] border border-dashed border-[#bfd9ff] bg-white/55 px-3.5 py-3">
+                      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#023BFD]/70">Campos a revisar manualmente</p>
+                      <div className="mt-1.5 flex flex-wrap gap-1.5">
+                        {state.missingFields.map((field) => (
+                          <span key={field} className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
+                            {formatImportFieldName(field)}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
+                </SectionCard>
+
+                {draft ? (
+                  <>
+                    <SectionCard title="Vista previa importada">
+                      <div className="grid gap-2.5 xl:grid-cols-4">
+                        <InputField
+                          label={renderConfidenceLabel('Nombre del proyecto', confidenceByField.name)}
+                          value={draft.name}
+                          onChange={(value) => onFieldChange('name', value)}
+                        />
+                        <InputField
+                          label={renderConfidenceLabel('Cliente', confidenceByField.client)}
+                          value={draft.client}
+                          onChange={(value) => onFieldChange('client', value)}
+                        />
+                        <SelectField
+                          label={renderConfidenceLabel('Tipo de proyecto', confidenceByField.initiativeType)}
+                          value={draft.initiativeType}
+                          options={initiativeOptions}
+                          onChange={(value) => onFieldChange('initiativeType', value)}
+                        />
+                        <SelectField
+                          label={renderConfidenceLabel('Estado general / salud', confidenceByField.health)}
+                          value={draft.health}
+                          options={healthOptions}
+                          onChange={(value) => onFieldChange('health', value)}
+                        />
+                        <InputField
+                          label={renderConfidenceLabel('Fecha inicio', confidenceByField.startDate)}
+                          type="date"
+                          value={draft.startDate}
+                          onChange={(value) => onFieldChange('startDate', value)}
+                        />
+                        <InputField
+                          label={renderConfidenceLabel('Fecha fin', confidenceByField.endDate)}
+                          type="date"
+                          value={draft.endDate}
+                          onChange={(value) => onFieldChange('endDate', value)}
+                        />
+                        <InputField
+                          label={renderConfidenceLabel('Horas presupuestadas', confidenceByField.budgetedHours)}
+                          type="number"
+                          value={draft.budgetedHours}
+                          onChange={(value) => onFieldChange('budgetedHours', value)}
+                        />
+                        <InputField
+                          label={renderConfidenceLabel('Consumo actual', confidenceByField.currentHours)}
+                          type="number"
+                          value={draft.currentHours}
+                          onChange={(value) => onFieldChange('currentHours', value)}
+                        />
+                        <InputField
+                          label={renderConfidenceLabel('Proximo hito', confidenceByField.nextMilestone)}
+                          value={draft.nextMilestone}
+                          inputClassName="xl:col-span-3"
+                          onChange={(value) => onFieldChange('nextMilestone', value)}
+                        />
+                        <InputField
+                          label={renderConfidenceLabel('Fecha del hito', confidenceByField.nextMilestoneDate)}
+                          type="date"
+                          value={draft.nextMilestoneDate}
+                          onChange={(value) => onFieldChange('nextMilestoneDate', value)}
+                        />
+                      </div>
+
+                      <div className="grid gap-2.5 xl:grid-cols-2">
+                        <TextAreaField
+                          label={renderConfidenceLabel('Descripcion', confidenceByField.description)}
+                          value={draft.description}
+                          rows={2}
+                          onChange={(value) => onFieldChange('description', value)}
+                        />
+                        <TextAreaField
+                          label={renderConfidenceLabel('Resumen ejecutivo de control', confidenceByField.controlSummary)}
+                          value={draft.controlSummary}
+                          rows={2}
+                          onChange={(value) => onFieldChange('controlSummary', value)}
+                        />
+                      </div>
+
+                      <TagField
+                        label={renderConfidenceLabel('Tecnologias utilizadas', confidenceByField.technologiesUsed)}
+                        value={technologyTagDraft}
+                        tags={draft.technologiesUsed}
+                        placeholder="Agregar tecnologia"
+                        onChange={setTechnologyTagDraft}
+                        onAdd={() => {
+                          onAddTagItem('technologiesUsed', technologyTagDraft)
+                          setTechnologyTagDraft('')
+                        }}
+                        onRemove={(tag) => onRemoveTagItem('technologiesUsed', tag)}
+                      />
+                    </SectionCard>
+
+                    <SectionCard title={renderConfidenceSectionTitle('Personal asignado', confidenceByField.teamAssigned)}>
+                      <div className="space-y-2">
+                        {draft.teamAssigned.length ? (
+                          draft.teamAssigned.map((member) => (
+                            <TeamAssignedRow
+                              key={member.id}
+                              name={member.name}
+                              role={member.role}
+                              occupation={member.dedication}
+                              onNameChange={(value) => onListItemChange('teamAssigned', member.id, 'name', value)}
+                              onRoleChange={(value) => onListItemChange('teamAssigned', member.id, 'role', value)}
+                              onOccupationChange={(value) => onListItemChange('teamAssigned', member.id, 'dedication', value)}
+                              onRemove={() => onRemoveListItem('teamAssigned', member.id)}
+                            />
+                          ))
+                        ) : (
+                          <p className="rounded-[0.95rem] border border-dashed border-[#bfd9ff] bg-white/55 px-3 py-3 text-sm text-slate-500">
+                            No se detecto personal asignado con suficiente estructura.
+                          </p>
+                        )}
+                      </div>
+                      <div className="pt-1">
+                        <button
+                          className="action-button w-full sm:w-auto"
+                          type="button"
+                          onClick={() => onAddListItem('teamAssigned', { role: '', name: '', dedication: '' })}
+                        >
+                          Agregar rol
+                        </button>
+                      </div>
+                    </SectionCard>
+
+                    <SectionCard title="Riesgos y contexto">
+                      <div className="grid gap-2.5 xl:grid-cols-2">
+                        <TextAreaField
+                          label={renderConfidenceLabel('Riesgo principal', confidenceByField.mainRisk)}
+                          value={draft.mainRisk}
+                          rows={3}
+                          onChange={(value) => onFieldChange('mainRisk', value)}
+                        />
+                        <TextAreaField
+                          label={renderConfidenceLabel('Alertas activas', confidenceByField.alertsAndRisks)}
+                          value={draft.alertsAndRisks}
+                          rows={3}
+                          onChange={(value) => onFieldChange('alertsAndRisks', value)}
+                        />
+                        <TextAreaField
+                          label={renderConfidenceLabel('Objetivo actual', confidenceByField.currentObjective)}
+                          value={draft.currentObjective}
+                          rows={3}
+                          onChange={(value) => onFieldChange('currentObjective', value)}
+                        />
+                        <TextAreaField
+                          label={renderConfidenceLabel('Vigilancia critica', confidenceByField.replacementWatch)}
+                          value={draft.replacementWatch}
+                          rows={3}
+                          onChange={(value) => onFieldChange('replacementWatch', value)}
+                        />
+                      </div>
+                    </SectionCard>
+
+                    <SectionCard title="Contacto del cliente">
+                      <div className="grid gap-2.5 md:grid-cols-2">
+                        <InputField
+                          label={renderConfidenceLabel('Nombre', confidenceByField['clientContact.name'])}
+                          value={draft.clientContact.name}
+                          onChange={(value) => onNestedFieldChange('clientContact', 'name', value)}
+                        />
+                        <InputField
+                          label={renderConfidenceLabel('Cargo', confidenceByField['clientContact.title'])}
+                          value={draft.clientContact.title}
+                          onChange={(value) => onNestedFieldChange('clientContact', 'title', value)}
+                        />
+                        <InputField
+                          label={renderConfidenceLabel('Email', confidenceByField['clientContact.email'])}
+                          type="email"
+                          value={draft.clientContact.email}
+                          onChange={(value) => onNestedFieldChange('clientContact', 'email', value)}
+                        />
+                        <InputField
+                          label={renderConfidenceLabel('WhatsApp', confidenceByField['clientContact.chat'])}
+                          value={draft.clientContact.chat}
+                          onChange={(value) => onNestedFieldChange('clientContact', 'chat', value)}
+                        />
+                      </div>
+                    </SectionCard>
+
+                    <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                      <button
+                        className="rounded-full bg-white/70 px-4 py-2 text-sm font-medium text-[#000083] ring-1 ring-inset ring-[#bfd9ff] transition hover:bg-white"
+                        type="button"
+                        onClick={onClose}
+                      >
+                        Cancelar
+                      </button>
+                      <button className="rounded-full bg-[#023BFD] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[#1054FF]" type="button" onClick={onConfirm}>
+                        Confirmar e importar proyecto
+                      </button>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function renderConfidenceLabel(label, confidence) {
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      <span>{label}</span>
+      {confidence ? <ConfidenceBadge confidence={confidence} /> : null}
+    </span>
+  )
+}
+
+function renderConfidenceSectionTitle(label, confidence) {
+  return (
+    <span className="inline-flex flex-wrap items-center gap-2">
+      <span>{label}</span>
+      {confidence ? <ConfidenceBadge confidence={confidence} /> : null}
+    </span>
+  )
+}
+
+function formatImportFieldName(field) {
+  const labels = {
+    description: 'Descripcion',
+    controlSummary: 'Resumen ejecutivo de control',
+    mainRisk: 'Riesgo principal',
+    currentObjective: 'Objetivo actual',
+    technologiesUsed: 'Tecnologias',
+    clientContact: 'Contacto cliente',
+    replacementWatch: 'Vigilancia critica',
+    alertsAndRisks: 'Alertas activas',
+    openDecisions: 'Temas por decidir',
+    importantMeetings: 'Reuniones importantes',
+    internalComments: 'Comentarios internos',
+  }
+
+  return labels[field] || field
+}
+
+function ConfidenceBadge({ confidence }) {
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${confidenceToneClasses[confidence] || confidenceToneClasses.Baja}`}>
+      {confidence}
+    </span>
   )
 }
 
