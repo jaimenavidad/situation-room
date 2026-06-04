@@ -6,7 +6,7 @@ const CACHE_KEY = 'situation-room-projects-cache-v1'
 const LEGACY_STORAGE_KEY = 'situation-room-projects-v2'
 const PROJECTS_GET_ENDPOINT = '/.netlify/functions/projects-get'
 const PROJECTS_SAVE_ENDPOINT = '/.netlify/functions/projects-save'
-const SAVE_DEBOUNCE_MS = 900
+const SAVE_DEBOUNCE_MS = 600
 
 const initiativeOptions = [
   'cloud computing',
@@ -211,12 +211,14 @@ const loadProjectsFromRemote = async () => {
   return projects.map(normalizeProject)
 }
 
-const saveProjectsToRemote = async (projects) => {
+const saveProjectsToRemote = async (projects, options = {}) => {
+  const { keepalive = false } = options
   const response = await fetch(PROJECTS_SAVE_ENDPOINT, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
+    keepalive,
     body: JSON.stringify({ projects }),
   })
 
@@ -455,7 +457,12 @@ function App() {
   const dossierCloseTimeoutRef = useRef(null)
   const saveTimeoutRef = useRef(null)
   const hasLoadedRemoteRef = useRef(false)
+  const projectsRef = useRef(projects)
   const deferredSearch = useDeferredValue(searchQuery)
+
+  useEffect(() => {
+    projectsRef.current = projects
+  }, [projects])
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -547,6 +554,40 @@ function App() {
       }
     }
   }, [projects])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined
+    }
+
+    const flushProjects = () => {
+      if (!hasLoadedRemoteRef.current) {
+        return
+      }
+
+      if (saveTimeoutRef.current) {
+        window.clearTimeout(saveTimeoutRef.current)
+      }
+
+      saveProjectsToRemote(projectsRef.current, { keepalive: true }).catch((error) => {
+        console.error('No se pudieron sincronizar los proyectos antes de salir.', error)
+      })
+    }
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        flushProjects()
+      }
+    }
+
+    window.addEventListener('beforeunload', flushProjects)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      window.removeEventListener('beforeunload', flushProjects)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [])
 
   useEffect(() => {
     document.body.style.overflow = activeTab === 'detail' ? 'hidden' : ''
