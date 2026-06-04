@@ -2,7 +2,11 @@ import { startTransition, useDeferredValue, useEffect, useRef, useState } from '
 
 import { sampleProjects } from './data/sampleProjects'
 
-const STORAGE_KEY = 'situation-room-projects-v1'
+const CACHE_KEY = 'situation-room-projects-cache-v1'
+const LEGACY_STORAGE_KEY = 'situation-room-projects-v2'
+const PROJECTS_GET_ENDPOINT = '/.netlify/functions/projects-get'
+const PROJECTS_SAVE_ENDPOINT = '/.netlify/functions/projects-save'
+const SAVE_DEBOUNCE_MS = 900
 
 const initiativeOptions = [
   'cloud computing',
@@ -14,7 +18,6 @@ const initiativeOptions = [
 ]
 
 const healthOptions = ['Verde', 'Amarillo', 'Rojo']
-const controlToneOptions = ['Estable', 'Seguimiento', 'Alerta']
 
 const healthClasses = {
   Verde: 'bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-200',
@@ -34,10 +37,16 @@ const controlToneCardClasses = {
   Alerta: 'border-rose-200 bg-[linear-gradient(180deg,rgba(255,241,242,0.92),rgba(255,255,255,0.78))]',
 }
 
-const controlToneTextClasses = {
-  Estable: 'text-emerald-700',
-  Seguimiento: 'text-amber-700',
-  Alerta: 'text-rose-700',
+const controlToneChipClasses = {
+  Estable: 'bg-emerald-100 text-emerald-700 ring-1 ring-inset ring-emerald-200',
+  Seguimiento: 'bg-amber-100 text-amber-700 ring-1 ring-inset ring-amber-200',
+  Alerta: 'bg-rose-100 text-rose-700 ring-1 ring-inset ring-rose-200',
+}
+
+const healthToControlTone = {
+  Verde: 'Estable',
+  Amarillo: 'Seguimiento',
+  Rojo: 'Alerta',
 }
 
 const legacyInitiativeMap = {
@@ -86,6 +95,8 @@ const emptyProject = () => {
     description: '',
     startDate: '',
     endDate: '',
+    budgetedHours: '',
+    currentHours: '',
     nextMilestone: '',
     nextMilestoneDate: '',
     pmResponsible: '',
@@ -97,7 +108,6 @@ const emptyProject = () => {
     lastUpdated: now,
     quickComments: '',
     controlSummary: '',
-    controlTone: 'Estable',
     clientContact: {
       name: '',
       title: '',
@@ -148,8 +158,9 @@ const normalizeProject = (project) => {
     description: project.description || project.quickComments || project.currentObjective || '',
     startDate: project.startDate || '',
     endDate: project.endDate || project.nextMilestoneDate || '',
+    budgetedHours: project.budgetedHours ?? '',
+    currentHours: project.currentHours ?? '',
     controlSummary: project.controlSummary || project.quickComments || '',
-    controlTone: controlToneOptions.includes(project.controlTone) ? project.controlTone : base.controlTone,
     assignedPeopleLabels,
     technologiesUsed,
     importantMeetings,
@@ -162,12 +173,12 @@ const normalizeProject = (project) => {
   }
 }
 
-const parseStoredProjects = () => {
+const parseProjectsFromStorageKey = (storageKey) => {
   if (typeof window === 'undefined') {
     return sampleProjects.map(normalizeProject)
   }
 
-  const saved = window.localStorage.getItem(STORAGE_KEY)
+  const saved = window.localStorage.getItem(storageKey)
 
   if (!saved) {
     return sampleProjects.map(normalizeProject)
@@ -179,6 +190,41 @@ const parseStoredProjects = () => {
   } catch {
     return sampleProjects.map(normalizeProject)
   }
+}
+
+const parseCachedProjects = () => parseProjectsFromStorageKey(CACHE_KEY)
+const parseLegacyProjects = () => parseProjectsFromStorageKey(LEGACY_STORAGE_KEY)
+
+const loadProjectsFromRemote = async () => {
+  const response = await fetch(PROJECTS_GET_ENDPOINT, {
+    headers: {
+      Accept: 'application/json',
+    },
+  })
+
+  if (!response.ok) {
+    throw new Error(`Error cargando proyectos (${response.status})`)
+  }
+
+  const payload = await response.json()
+  const projects = Array.isArray(payload?.projects) ? payload.projects : []
+  return projects.map(normalizeProject)
+}
+
+const saveProjectsToRemote = async (projects) => {
+  const response = await fetch(PROJECTS_SAVE_ENDPOINT, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ projects }),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Error guardando proyectos (${response.status})`)
+  }
+
+  return response.json()
 }
 
 const formatDate = (value, options = {}) => {
@@ -198,6 +244,197 @@ const formatDate = (value, options = {}) => {
   }).format(date)
 }
 
+const parseDateAtStartOfDay = (value) => {
+  if (!value) {
+    return null
+  }
+
+  const date = new Date(value)
+
+  if (Number.isNaN(date.getTime())) {
+    return null
+  }
+
+  date.setHours(0, 0, 0, 0)
+  return date
+}
+
+const formatOccupationValue = (value) => {
+  const trimmed = String(value || '').trim()
+
+  if (!trimmed) {
+    return ''
+  }
+
+  return trimmed.includes('%') ? trimmed : `${trimmed}%`
+}
+
+const getTimelineProgress = (startDate, endDate, referenceDate = new Date()) => {
+  const start = parseDateAtStartOfDay(startDate)
+  const end = parseDateAtStartOfDay(endDate)
+
+  if (!start || !end || end.getTime() <= start.getTime()) {
+    return {
+      percentage: 0,
+      tier: 'unscheduled',
+      label: 'Sin rango',
+      detail: 'Agrega fechas para medir avance',
+    }
+  }
+
+  const today = new Date(referenceDate)
+  today.setHours(0, 0, 0, 0)
+
+  const startTime = start.getTime()
+  const endTime = end.getTime()
+  const todayTime = today.getTime()
+  const duration = endTime - startTime
+
+  let percentage
+
+  if (todayTime <= startTime) {
+    percentage = 0
+  } else if (todayTime >= endTime) {
+    percentage = 100
+  } else {
+    percentage = Math.round(((todayTime - startTime) / duration) * 100)
+  }
+
+  if (percentage >= 100) {
+    return {
+      percentage,
+      tier: 'complete',
+      label: 'Final',
+      detail: 'Timeline consumido',
+    }
+  }
+
+  if (percentage >= 80) {
+    return {
+      percentage,
+      tier: 'late',
+      label: 'Late stage',
+      detail: 'Cerca del cierre',
+    }
+  }
+
+  if (percentage >= 50) {
+    return {
+      percentage,
+      tier: 'mid',
+      label: 'Midway',
+      detail: 'Mitad o mas del tramo',
+    }
+  }
+
+  return {
+    percentage,
+    tier: 'early',
+    label: 'On track',
+    detail: 'Tramo inicial',
+  }
+}
+
+const getHoursConsumptionProgress = (budgetedHours, currentHours) => {
+  const budget = Number(budgetedHours)
+  const consumed = Number(currentHours)
+
+  if (!Number.isFinite(budget) || budget <= 0) {
+    return {
+      percentage: 0,
+      tier: 'unscheduled',
+      label: 'Sin presupuesto',
+      detail: 'Agrega horas presupuestadas',
+    }
+  }
+
+  const normalizedConsumed = Number.isFinite(consumed) && consumed > 0 ? consumed : 0
+  const ratio = normalizedConsumed / budget
+  const percentage = Math.max(0, Math.round(Math.min(ratio, 1) * 100))
+
+  if (ratio >= 1) {
+    return {
+      percentage: 100,
+      tier: 'complete',
+      label: 'Tope alcanzado',
+      detail: `${normalizedConsumed}h de ${budget}h`,
+    }
+  }
+
+  if (ratio >= 0.8) {
+    return {
+      percentage,
+      tier: 'late',
+      label: 'Consumo alto',
+      detail: `${normalizedConsumed}h de ${budget}h`,
+    }
+  }
+
+  if (ratio >= 0.5) {
+    return {
+      percentage,
+      tier: 'mid',
+      label: 'Mitad consumida',
+      detail: `${normalizedConsumed}h de ${budget}h`,
+    }
+  }
+
+  return {
+    percentage,
+    tier: 'early',
+    label: 'Consumo sano',
+    detail: `${normalizedConsumed}h de ${budget}h`,
+  }
+}
+
+const getOccupationProgress = (value) => {
+  const normalized = String(value || '').replace('%', '').trim()
+  const percentage = Number(normalized)
+
+  if (!Number.isFinite(percentage) || percentage <= 0) {
+    return {
+      percentage: 0,
+      tier: 'unscheduled',
+      label: 'Sin carga',
+      detail: '0%',
+    }
+  }
+
+  if (percentage >= 100) {
+    return {
+      percentage: 100,
+      tier: 'complete',
+      label: 'Full load',
+      detail: `${percentage}%`,
+    }
+  }
+
+  if (percentage >= 80) {
+    return {
+      percentage,
+      tier: 'late',
+      label: 'Carga alta',
+      detail: `${percentage}%`,
+    }
+  }
+
+  if (percentage >= 50) {
+    return {
+      percentage,
+      tier: 'mid',
+      label: 'Carga media',
+      detail: `${percentage}%`,
+    }
+  }
+
+  return {
+    percentage,
+    tier: 'early',
+    label: 'Carga baja',
+    detail: `${percentage}%`,
+  }
+}
+
 const sortProjectsByMilestone = (projects) =>
   [...projects].sort((left, right) => {
     const leftTime = left.nextMilestoneDate ? new Date(left.nextMilestoneDate).getTime() : Number.MAX_SAFE_INTEGER
@@ -206,26 +443,109 @@ const sortProjectsByMilestone = (projects) =>
   })
 
 function App() {
-  const [projects, setProjects] = useState(parseStoredProjects)
-  const [selectedProjectId, setSelectedProjectId] = useState(() => sampleProjects[0]?.id ?? '')
+  const [projects, setProjects] = useState(() => parseCachedProjects())
+  const [selectedProjectId, setSelectedProjectId] = useState(() => parseCachedProjects()[0]?.id ?? '')
   const [activeTab, setActiveTab] = useState('portfolio')
   const [isDossierClosing, setIsDossierClosing] = useState(false)
   const [healthFilter, setHealthFilter] = useState('Todos')
   const [initiativeFilter, setInitiativeFilter] = useState('Todos')
   const [searchQuery, setSearchQuery] = useState('')
   const [pendingComment, setPendingComment] = useState('')
+  const [isInitialLoading, setIsInitialLoading] = useState(true)
   const dossierCloseTimeoutRef = useRef(null)
+  const saveTimeoutRef = useRef(null)
+  const hasLoadedRemoteRef = useRef(false)
   const deferredSearch = useDeferredValue(searchQuery)
 
   useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined
+    }
+
+    let isCancelled = false
+
+    const hydrateProjects = async () => {
+      try {
+        const remoteProjects = await loadProjectsFromRemote()
+        const legacyProjects = remoteProjects.length ? [] : parseLegacyProjects()
+        const resolvedProjects = remoteProjects.length ? remoteProjects : legacyProjects
+
+        if (isCancelled) {
+          return
+        }
+
+        setProjects(resolvedProjects)
+        setSelectedProjectId((currentId) => {
+          if (resolvedProjects.some((project) => project.id === currentId)) {
+            return currentId
+          }
+
+          return resolvedProjects[0]?.id ?? ''
+        })
+        window.localStorage.setItem(
+          CACHE_KEY,
+          JSON.stringify({
+            version: 1,
+            savedAt: new Date().toISOString(),
+            projects: resolvedProjects,
+          }),
+        )
+
+        if (!remoteProjects.length && legacyProjects.length) {
+          saveProjectsToRemote(legacyProjects).catch((error) => {
+            console.error('No se pudieron migrar los proyectos legacy hacia Netlify Blobs.', error)
+          })
+        }
+      } catch (error) {
+        console.error('No se pudieron cargar los proyectos desde Netlify Blobs.', error)
+      } finally {
+        if (!isCancelled) {
+          hasLoadedRemoteRef.current = true
+          setIsInitialLoading(false)
+        }
+      }
+    }
+
+    hydrateProjects()
+
+    return () => {
+      isCancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined
+    }
+
     window.localStorage.setItem(
-      STORAGE_KEY,
+      CACHE_KEY,
       JSON.stringify({
         version: 1,
         savedAt: new Date().toISOString(),
         projects,
       }),
     )
+
+    if (!hasLoadedRemoteRef.current) {
+      return undefined
+    }
+
+    if (saveTimeoutRef.current) {
+      window.clearTimeout(saveTimeoutRef.current)
+    }
+
+    saveTimeoutRef.current = window.setTimeout(() => {
+      saveProjectsToRemote(projects).catch((error) => {
+        console.error('No se pudieron guardar los proyectos en Netlify Blobs.', error)
+      })
+    }, SAVE_DEBOUNCE_MS)
+
+    return () => {
+      if (saveTimeoutRef.current) {
+        window.clearTimeout(saveTimeoutRef.current)
+      }
+    }
   }, [projects])
 
   useEffect(() => {
@@ -239,6 +559,10 @@ function App() {
     return () => {
       if (dossierCloseTimeoutRef.current) {
         window.clearTimeout(dossierCloseTimeoutRef.current)
+      }
+
+      if (saveTimeoutRef.current) {
+        window.clearTimeout(saveTimeoutRef.current)
       }
     }
   }, [])
@@ -417,39 +741,31 @@ function App() {
             </div>
 
             <div className="flex flex-wrap gap-3">
-              <button className="action-button action-button-primary" type="button" onClick={addProject}>
-                Nuevo proyecto
-              </button>
+              <div className="flex flex-wrap gap-3 rounded-full bg-white/58 p-1.5 ring-1 ring-inset ring-[#bfd9ff]">
+                <TabButton active={activeTab === 'portfolio'} label="Portafolio" onClick={() => setActiveTab('portfolio')} />
+                <TabButton active={activeTab === 'detail'} label="Nuevo proyecto" onClick={addProject} />
+              </div>
             </div>
           </div>
 
-          <div className="flex flex-wrap gap-3">
-            <TabButton active={activeTab === 'portfolio'} label="Portafolio" onClick={() => setActiveTab('portfolio')} />
-            {activeTab === 'detail' && selectedProject ? (
-              <TabButton
-                active
-                label={`Dossier: ${selectedProject.name}`}
-                onClick={() => setActiveTab('detail')}
-              />
-            ) : null}
-          </div>
         </header>
 
         <section className="mb-6 grid gap-4 md:grid-cols-3">
-          <SummaryCard label="Verdes" value={summary.Verde ?? 0} tone="Verde" helper="Ritmo estable y bajo riesgo inmediato." />
+          <SummaryCard label="Control" value={summary.Verde ?? 0} tone="Verde" helper="Ritmo estable y bajo riesgo inmediato." />
           <SummaryCard
-            label="Amarillos"
+            label="Seguimiento"
             value={summary.Amarillo ?? 0}
             tone="Amarillo"
             helper="Necesitan seguimiento o desbloqueos esta semana."
           />
-          <SummaryCard label="Rojos" value={summary.Rojo ?? 0} tone="Rojo" helper="Atencion ejecutiva y plan de contencion." />
+          <SummaryCard label="Alerta" value={summary.Rojo ?? 0} tone="Rojo" helper="Atencion ejecutiva y plan de contencion." />
         </section>
 
         <main className="flex flex-1 flex-col gap-6">
           <section className="flex flex-col">
             <PortfolioPanel
               projects={filteredProjects}
+              isInitialLoading={isInitialLoading}
               selectedProjectId={activeSelectedProjectId}
               healthFilter={healthFilter}
               initiativeFilter={initiativeFilter}
@@ -507,21 +823,24 @@ function TabButton({ active, label, onClick }) {
 
 function SummaryCard({ label, value, tone, helper }) {
   return (
-    <article className="glass-panel rounded-[1.75rem] p-5">
-      <div className="mb-4 flex items-center justify-between">
-        <div>
-          <p className="text-sm uppercase tracking-[0.24em] text-[#000083]/58">{label}</p>
-          <p className="mt-3 text-4xl font-semibold text-[#000083]">{value}</p>
+    <article className="glass-panel rounded-[1.5rem] px-4 py-3.5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-[11px] uppercase tracking-[0.22em] text-[#000083]/58">{label}</p>
+          <div className="mt-2 flex items-end gap-3">
+            <p className="text-[2.25rem] font-semibold leading-none text-[#000083]">{value}</p>
+            <p className="pb-1 text-xs leading-4 text-slate-700">{helper}</p>
+          </div>
         </div>
         <HealthBadge health={tone} />
       </div>
-      <p className="text-sm leading-6 text-slate-700">{helper}</p>
     </article>
   )
 }
 
 function PortfolioPanel({
   projects,
+  isInitialLoading,
   selectedProjectId,
   healthFilter,
   initiativeFilter,
@@ -594,7 +913,7 @@ function PortfolioPanel({
 
       {!projects.length ? (
         <div className="rounded-[1.5rem] border border-dashed border-[#bfd9ff] bg-white/55 px-6 py-12 text-center text-sm text-slate-600">
-          No hay proyectos que coincidan con los filtros actuales.
+          {isInitialLoading ? 'Cargando proyectos desde Netlify Blobs...' : 'No hay proyectos que coincidan con los filtros actuales.'}
         </div>
       ) : null}
     </div>
@@ -602,6 +921,30 @@ function PortfolioPanel({
 }
 
 function PortfolioProjectCard({ project, isSelected, onOpenDetail }) {
+  const timeline = getTimelineProgress(project.startDate, project.endDate)
+  const hoursConsumption = getHoursConsumptionProgress(project.budgetedHours, project.currentHours)
+  const controlTone = healthToControlTone[project.health] || 'Estable'
+  const personnelOverviewItems =
+    project.teamAssigned?.filter((member) => member.name?.trim() || member.role?.trim()).map((member) => ({
+      role: member.role?.trim() || 'Rol pendiente',
+      name: member.name?.trim() || 'Sin nombre',
+    })) || []
+  const teamAssignedItems =
+    project.teamAssigned?.length
+      ? project.teamAssigned.map((member) => {
+          const name = member.name?.trim()
+          const role = member.role?.trim()
+          const occupation = formatOccupationValue(member.dedication)
+          const details = [role, occupation].filter(Boolean).join(' · ')
+
+          if (name && details) {
+            return `${name} · ${details}`
+          }
+
+          return name || details || 'Sin asignacion'
+        })
+      : ['Sin asignacion']
+
   return (
     <article
       className={`overflow-hidden rounded-[1.85rem] border transition ${
@@ -638,10 +981,17 @@ function PortfolioProjectCard({ project, isSelected, onOpenDetail }) {
           </div>
 
           <div className="grid gap-2.5 md:grid-cols-2 xl:grid-cols-4">
-            <CompactFact label="Main PM" value={project.pmResponsible || 'Sin PM'} />
-            <CompactFact label="Backup PM" value={project.pmBackup || 'Sin backup'} />
+            <CompactPersonnelFacts items={personnelOverviewItems} />
             <CompactFact label="Fecha inicio" value={project.startDate ? formatDate(project.startDate) : 'Pendiente'} />
             <CompactFact label="Fecha fin" value={project.endDate ? formatDate(project.endDate) : 'Pendiente'} />
+          </div>
+
+          <div className="mt-2.5 space-y-2.5">
+            <CompactStrip label="Riesgo principal" value={project.mainRisk || 'Sin riesgo registrado.'} />
+            <CompactStrip
+              label="Objetivo actual"
+              value={project.currentObjective || project.description || 'Sin objetivo actual definido.'}
+            />
           </div>
         </div>
 
@@ -649,34 +999,63 @@ function PortfolioProjectCard({ project, isSelected, onOpenDetail }) {
           <div className="space-y-2.5">
             <LabelCluster
               label="Personal asignado"
-              items={project.assignedPeopleLabels?.length ? project.assignedPeopleLabels : ['Sin asignacion']}
+              items={teamAssignedItems}
             />
             <LabelCluster
               label="Tecnologias"
               items={project.technologiesUsed?.length ? project.technologiesUsed : ['Por definir']}
               subtle
             />
+            <CompactContactCard contact={project.clientContact} />
+            <CompactStrip
+              label="Vigilancia critica"
+              value={project.replacementWatch || 'Sin vigilancia critica registrada.'}
+            />
           </div>
         </div>
 
-        <div className="min-w-0 flex flex-col gap-2.5 p-4">
-          <div className={`rounded-[1.2rem] border p-3.5 ${controlToneCardClasses[project.controlTone] || controlToneCardClasses.Estable}`}>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#023BFD]/68">Control</p>
-            <p className={`mt-2 text-[1.7rem] font-semibold leading-none ${controlToneTextClasses[project.controlTone] || controlToneTextClasses.Estable}`}>
-              {project.controlTone || 'Estable'}
-            </p>
-            <p className="mt-1.5 line-clamp-3 text-sm leading-5 text-slate-700">
+        <div className="min-w-0 flex h-full flex-col gap-2.5 p-4">
+          <div
+            className={`flex min-h-[8.9rem] flex-1 flex-col rounded-[1.2rem] border p-3.5 ${
+              controlToneCardClasses[controlTone] || controlToneCardClasses.Estable
+            }`}
+          >
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#023BFD]/68">Control</p>
+              <span
+                className={`rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] ${
+                  controlToneChipClasses[controlTone] || controlToneChipClasses.Estable
+                }`}
+              >
+                {controlTone}
+              </span>
+            </div>
+            <p className="mt-2 line-clamp-4 text-sm leading-5 text-slate-700">
               {project.controlSummary || 'Sin comentario ejecutivo registrado.'}
             </p>
           </div>
-        </div>
 
-        <div className="grid min-w-0 gap-2.5 border-t border-[#bfd9ff]/75 p-4 xl:col-span-3 xl:grid-cols-2">
-          <CompactStrip label="Riesgo principal" value={project.mainRisk || 'Sin riesgo registrado.'} />
-          <CompactStrip
-            label="Objetivo actual"
-            value={project.currentObjective || project.description || 'Sin objetivo actual definido.'}
-          />
+          <div className="rounded-[1.2rem] border border-[#bfd9ff] bg-white/78 px-3 py-2.5">
+            <div className="flex items-center justify-between gap-2.5">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#023BFD]/68">Timeline</p>
+                <p className="mt-0.5 text-[13px] font-medium leading-4 text-[#000083]">{timeline.label}</p>
+                <p className="mt-0.5 line-clamp-2 text-[11px] leading-4 text-slate-500">{timeline.detail}</p>
+              </div>
+              <TimelineDonut startDate={project.startDate} endDate={project.endDate} size={62} strokeWidth={6} />
+            </div>
+          </div>
+
+          <div className="rounded-[1.2rem] border border-[#bfd9ff] bg-white/78 px-3 py-2.5">
+            <div className="flex items-center justify-between gap-2.5">
+              <div className="min-w-0">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#023BFD]/68">Horas</p>
+                <p className="mt-0.5 text-[13px] font-medium leading-4 text-[#000083]">{hoursConsumption.label}</p>
+                <p className="mt-0.5 line-clamp-2 text-[11px] leading-4 text-slate-500">{hoursConsumption.detail}</p>
+              </div>
+              <HoursConsumptionDonut budgetedHours={project.budgetedHours} currentHours={project.currentHours} size={62} strokeWidth={6} />
+            </div>
+          </div>
         </div>
       </div>
     </article>
@@ -694,6 +1073,33 @@ function CompactFact({ label, value, accent = false }) {
     >
       <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#023BFD]/70">{label}</p>
       <p className="mt-1.5 line-clamp-2 text-sm font-medium leading-5 text-[#000083]">{value || 'Sin definir'}</p>
+    </div>
+  )
+}
+
+function CompactPersonnelFacts({ items }) {
+  const visibleItems = items.slice(0, 4)
+  const remainingCount = items.length - visibleItems.length
+
+  return (
+    <div className="rounded-[1.05rem] bg-[#f8fbff]/88 px-3.5 py-2.5 ring-1 ring-inset ring-[#bfd9ff] md:col-span-2 xl:col-span-2">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#023BFD]/70">Personal asignado</p>
+      {visibleItems.length ? (
+        <div className="mt-1.5 flex max-h-[2.2rem] flex-wrap items-center gap-x-2 gap-y-0.5 overflow-hidden text-[11px] leading-4 text-slate-500">
+          {visibleItems.map((item) => (
+            <span key={`${item.role}-${item.name}`} className="min-w-0 truncate">
+              <span className="font-medium text-[#000083]">{item.role || 'Rol pendiente'}</span>
+              <span className="mx-1 text-[#023BFD]/28">•</span>
+              <span>{item.name || 'Sin nombre'}</span>
+            </span>
+          ))}
+          {remainingCount > 0 ? (
+            <span className="font-medium text-slate-500">+{remainingCount} perfiles mas</span>
+          ) : null}
+        </div>
+      ) : (
+        <p className="mt-1.5 text-[11px] leading-4 text-slate-500">Sin asignacion</p>
+      )}
     </div>
   )
 }
@@ -730,6 +1136,136 @@ function LabelCluster({ label, items, subtle = false }) {
   )
 }
 
+function CompactContactCard({ contact }) {
+  const hasContactInfo = contact?.name || contact?.title || contact?.email || contact?.chat
+
+  return (
+    <div className="rounded-[1.05rem] border border-[#bfd9ff] bg-white/72 px-3 py-2.5">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#023BFD]/70">Contacto cliente</p>
+      {hasContactInfo ? (
+        <div className="mt-1.5 space-y-1">
+          <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <p className="text-sm font-medium leading-4.5 text-[#000083]">{contact.name || 'Sin nombre'}</p>
+            <p className="text-[11px] leading-4 text-slate-600">{contact.title || 'Cargo pendiente'}</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] leading-4 text-slate-500">
+            <p className="min-w-0 truncate">{contact.email || 'Email pendiente'}</p>
+            <span className="text-[#023BFD]/28">•</span>
+            <p className="min-w-0 truncate">{contact.chat || 'WhatsApp pendiente'}</p>
+          </div>
+        </div>
+      ) : (
+        <p className="mt-1.5 text-sm text-slate-500">Sin contacto principal definido.</p>
+      )}
+    </div>
+  )
+}
+
+function ProgressDonut({ progress, size = 78, strokeWidth = 8, caption = 'elapsed', compactText = false }) {
+  const ringThemes = {
+    unscheduled: {
+      glow: 'shadow-[0_12px_28px_rgba(148,163,184,0.16)]',
+      track: 'rgba(191,217,255,0.38)',
+      progress: 'rgba(148,163,184,0.75)',
+      text: 'text-slate-500',
+      caption: 'text-slate-400',
+    },
+    early: {
+      glow: 'shadow-[0_10px_24px_rgba(2,59,253,0.14)]',
+      track: 'rgba(191,217,255,0.36)',
+      progress: 'rgba(2,59,253,0.86)',
+      text: 'text-[#023BFD]',
+      caption: 'text-[#023BFD]/58',
+    },
+    mid: {
+      glow: 'shadow-[0_10px_24px_rgba(16,84,255,0.16)]',
+      track: 'rgba(191,217,255,0.36)',
+      progress: 'rgba(16,84,255,0.92)',
+      text: 'text-[#1054FF]',
+      caption: 'text-[#1054FF]/60',
+    },
+    late: {
+      glow: 'shadow-[0_10px_24px_rgba(245,158,11,0.14)]',
+      track: 'rgba(255,224,130,0.28)',
+      progress: 'rgba(245,158,11,0.95)',
+      text: 'text-amber-600',
+      caption: 'text-amber-600/60',
+    },
+    complete: {
+      glow: 'shadow-[0_10px_24px_rgba(0,0,131,0.14)]',
+      track: 'rgba(191,217,255,0.28)',
+      progress: 'rgba(0,0,131,0.92)',
+      text: 'text-[#000083]',
+      caption: 'text-[#000083]/55',
+    },
+  }
+
+  const theme = ringThemes[progress.tier] || ringThemes.early
+  const radius = (size - strokeWidth) / 2
+  const circumference = 2 * Math.PI * radius
+  const offset = circumference - (progress.percentage / 100) * circumference
+
+  return (
+    <div
+      className={`relative shrink-0 rounded-full bg-[radial-gradient(circle_at_30%_25%,rgba(255,255,255,0.98),rgba(238,245,255,0.82)_60%,rgba(223,234,255,0.4)_100%)] ${theme.glow}`}
+      style={{ width: size, height: size }}
+    >
+      <svg className="-rotate-90" width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke={theme.track}
+          strokeWidth={strokeWidth}
+        />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={radius}
+          fill="none"
+          stroke={theme.progress}
+          strokeLinecap="round"
+          strokeWidth={strokeWidth}
+          strokeDasharray={circumference}
+          strokeDashoffset={offset}
+        />
+      </svg>
+
+      <div className="absolute inset-0 flex flex-col items-center justify-center">
+        <span className={`font-display leading-none ${compactText ? 'text-[0.52rem]' : 'text-[0.95rem]'} ${theme.text}`}>
+          {progress.percentage}%
+        </span>
+        {!compactText ? (
+          <span className={`mt-0.5 text-[8px] font-semibold uppercase tracking-[0.16em] ${theme.caption}`}>{caption}</span>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+function TimelineDonut({ startDate, endDate, size = 78, strokeWidth = 8 }) {
+  return (
+    <ProgressDonut
+      progress={getTimelineProgress(startDate, endDate)}
+      size={size}
+      strokeWidth={strokeWidth}
+      caption="elapsed"
+    />
+  )
+}
+
+function HoursConsumptionDonut({ budgetedHours, currentHours, size = 78, strokeWidth = 8 }) {
+  return (
+    <ProgressDonut
+      progress={getHoursConsumptionProgress(budgetedHours, currentHours)}
+      size={size}
+      strokeWidth={strokeWidth}
+      caption="hours"
+    />
+  )
+}
+
 function DossierModal({
   project,
   isClosing,
@@ -762,9 +1298,9 @@ function DossierModal({
       <div className={`modal-shell relative z-10 w-full max-w-5xl ${isClosing ? 'modal-shell-exit' : 'modal-shell-enter'}`}>
         <div className="pointer-events-none absolute inset-x-10 top-0 z-0 h-24 rounded-full bg-[radial-gradient(circle,_rgba(2,59,253,0.18),_rgba(255,255,255,0)_72%)] blur-3xl" />
 
-        <div className="relative z-20 mb-4 flex justify-end">
+        <div className="relative z-20 mb-3 flex justify-end">
           <button
-            className="inline-flex h-12 w-12 items-center justify-center rounded-full border border-white/60 bg-white/72 text-2xl leading-none text-[#000083] shadow-[0_18px_45px_rgba(2,59,253,0.16)] backdrop-blur-xl transition hover:bg-white"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/60 bg-white/72 text-xl leading-none text-[#000083] shadow-[0_14px_34px_rgba(2,59,253,0.16)] backdrop-blur-xl transition hover:bg-white"
             type="button"
             onClick={onClose}
           >
@@ -773,7 +1309,7 @@ function DossierModal({
         </div>
 
         <div className="modal-frame relative overflow-hidden rounded-[2.25rem]">
-          <div className="dossier-scroll max-h-[calc(100vh-7rem)] overflow-y-auto">
+          <div className="dossier-scroll max-h-[calc(100vh-6rem)] overflow-y-auto">
             <ProjectDetailPanel
               project={project}
               onFieldChange={onFieldChange}
@@ -811,37 +1347,56 @@ function ProjectDetailPanel({
   onToggleCommentResolved,
   modal = false,
 }) {
-  const [personTagDraft, setPersonTagDraft] = useState('')
   const [technologyTagDraft, setTechnologyTagDraft] = useState('')
 
   return (
     <div
       className={`glass-panel rounded-[2rem] p-5 sm:p-6 ${
         modal
-          ? 'border-white/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.78),rgba(243,248,255,0.72))] p-4 shadow-[0_35px_110px_rgba(2,59,253,0.18)] backdrop-blur-[26px] sm:p-5'
+          ? 'border-white/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.78),rgba(243,248,255,0.72))] p-3.5 shadow-[0_30px_90px_rgba(2,59,253,0.18)] backdrop-blur-[26px] sm:p-4'
           : 'h-full'
       }`}
     >
-      <div className="mb-4 flex flex-col gap-3 border-b border-[#bfd9ff] pb-4 xl:flex-row xl:items-start xl:justify-between">
+      <div className="mb-3 flex flex-col gap-2.5 border-b border-[#bfd9ff] pb-3 xl:flex-row xl:items-start xl:justify-between">
         <div>
-          <div className="mb-2 flex items-center gap-2.5">
+          <div className="mb-1.5 flex items-center gap-2">
             <HealthBadge health={project.health} />
-            <span className="text-xs uppercase tracking-[0.24em] text-[#023BFD]/70">Dossier del proyecto</span>
+            <span className="text-[11px] uppercase tracking-[0.22em] text-[#023BFD]/70">Dossier del proyecto</span>
           </div>
-          <h2 className="font-display text-[1.7rem] leading-tight text-[#000083]">{project.name}</h2>
-          <p className="mt-1 max-w-2xl text-sm text-slate-700">
+          <h2 className="font-display text-[1.45rem] leading-tight text-[#000083]">{project.name}</h2>
+          <p className="mt-0.5 max-w-2xl text-[13px] text-slate-700">
             Ultima actualizacion registrada: {formatDate(project.lastUpdated, { timeStyle: 'short' })}
           </p>
         </div>
-        <div className="rounded-[1.05rem] border border-[#bfd9ff] bg-white/65 px-3.5 py-2.5 text-sm text-slate-700">
-          <p className="text-xs uppercase tracking-[0.24em] text-[#023BFD]/70">Cliente</p>
-          <p className="mt-1 text-base font-medium text-[#000083]">{project.client || 'Pendiente de definir'}</p>
+        <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
+          <div className="rounded-[0.95rem] border border-[#bfd9ff] bg-white/65 px-3 py-1.5 text-sm text-slate-700">
+            <p className="text-[11px] uppercase tracking-[0.22em] text-[#023BFD]/70">Cliente</p>
+            <p className="mt-0.5 text-[15px] font-medium text-[#000083]">{project.client || 'Pendiente de definir'}</p>
+          </div>
+          <div className="rounded-[0.95rem] border border-[#bfd9ff] bg-white/65 px-2.5 py-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.22em] text-[#023BFD]/70">Timeline</p>
+                <p className="mt-0.5 text-[10px] text-slate-500">Inicio vs cierre</p>
+              </div>
+              <TimelineDonut startDate={project.startDate} endDate={project.endDate} size={58} strokeWidth={6} />
+            </div>
+          </div>
+          <div className="rounded-[0.95rem] border border-[#bfd9ff] bg-white/65 px-2.5 py-1.5">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.22em] text-[#023BFD]/70">Horas</p>
+                <p className="mt-0.5 text-[10px] text-slate-500">Budget vs consumo</p>
+              </div>
+              <HoursConsumptionDonut budgetedHours={project.budgetedHours} currentHours={project.currentHours} size={58} strokeWidth={6} />
+            </div>
+          </div>
         </div>
       </div>
 
-      <div className="space-y-4">
+      <div className="space-y-3">
         <SectionCard title="Vista general">
-          <div className="grid gap-3 xl:grid-cols-3">
+          <div className="grid gap-2.5 xl:grid-cols-4">
             <InputField label="Nombre del proyecto" value={project.name} onChange={(value) => onFieldChange(project.id, 'name', value)} />
             <InputField label="Cliente" value={project.client} onChange={(value) => onFieldChange(project.id, 'client', value)} />
             <SelectField
@@ -869,182 +1424,159 @@ function ProjectDetailPanel({
               onChange={(value) => onFieldChange(project.id, 'endDate', value)}
             />
             <InputField
+              label="Horas presupuestadas"
+              type="number"
+              value={project.budgetedHours}
+              onChange={(value) => onFieldChange(project.id, 'budgetedHours', value)}
+            />
+            <InputField
+              label="Consumo actual"
+              type="number"
+              value={project.currentHours}
+              onChange={(value) => onFieldChange(project.id, 'currentHours', value)}
+            />
+            <InputField
               label="Proximo hito"
               value={project.nextMilestone}
+              inputClassName="xl:col-span-3"
               onChange={(value) => onFieldChange(project.id, 'nextMilestone', value)}
             />
             <InputField
               label="Fecha del hito"
               type="date"
               value={project.nextMilestoneDate}
+              inputClassName="xl:col-span-1"
               onChange={(value) => onFieldChange(project.id, 'nextMilestoneDate', value)}
             />
           </div>
 
-          <div className="grid gap-3 xl:grid-cols-2">
+          <div className="grid gap-2.5 xl:grid-cols-2">
             <TextAreaField
               label="Descripcion"
               value={project.description}
               onChange={(value) => onFieldChange(project.id, 'description', value)}
-              rows={3}
+              rows={2}
             />
-            <div className="space-y-2">
-              <SelectField
-                label="Tono del bloque control"
-                value={project.controlTone}
-                options={controlToneOptions}
-                onChange={(value) => onFieldChange(project.id, 'controlTone', value)}
-              />
-              <p className="text-xs leading-5 text-slate-500">
-                Usa este tono para la lectura ejecutiva, independiente del semaforo operativo.
-              </p>
-              <TextAreaField
-                label="Resumen ejecutivo de control"
-                value={project.controlSummary}
-                onChange={(value) => onFieldChange(project.id, 'controlSummary', value)}
-                rows={2}
-              />
-            </div>
-          </div>
-
-          <div className="grid gap-3 xl:grid-cols-2">
-            <TagField
-              label="Personal asignado"
-              value={personTagDraft}
-              tags={project.assignedPeopleLabels}
-              placeholder="Agregar persona o rol"
-              onChange={setPersonTagDraft}
-              onAdd={() => {
-                onAddTagItem(project.id, 'assignedPeopleLabels', personTagDraft)
-                setPersonTagDraft('')
-              }}
-              onRemove={(tag) => onRemoveTagItem(project.id, 'assignedPeopleLabels', tag)}
-            />
-            <TagField
-              label="Tecnologias utilizadas"
-              value={technologyTagDraft}
-              tags={project.technologiesUsed}
-              placeholder="Agregar tecnologia"
-              onChange={setTechnologyTagDraft}
-              onAdd={() => {
-                onAddTagItem(project.id, 'technologiesUsed', technologyTagDraft)
-                setTechnologyTagDraft('')
-              }}
-              onRemove={(tag) => onRemoveTagItem(project.id, 'technologiesUsed', tag)}
+            <TextAreaField
+              label="Resumen ejecutivo de control"
+              value={project.controlSummary}
+              onChange={(value) => onFieldChange(project.id, 'controlSummary', value)}
+              rows={2}
             />
           </div>
 
-          <div className="grid gap-3 xl:grid-cols-2">
+          <TagField
+            label="Tecnologias utilizadas"
+            value={technologyTagDraft}
+            tags={project.technologiesUsed}
+            placeholder="Agregar tecnologia"
+            onChange={setTechnologyTagDraft}
+            onAdd={() => {
+              onAddTagItem(project.id, 'technologiesUsed', technologyTagDraft)
+              setTechnologyTagDraft('')
+            }}
+            onRemove={(tag) => onRemoveTagItem(project.id, 'technologiesUsed', tag)}
+          />
+
+          <div className="grid gap-2.5 xl:grid-cols-2">
             <TextAreaField
               label="Riesgos"
               value={project.mainRisk}
               onChange={(value) => onFieldChange(project.id, 'mainRisk', value)}
-              rows={3}
+              rows={2}
             />
             <TextAreaField
               label="Objetivo actual"
               value={project.currentObjective}
               onChange={(value) => onFieldChange(project.id, 'currentObjective', value)}
+              rows={2}
+            />
+          </div>
+        </SectionCard>
+
+        <SectionCard title="Contacto cliente y vigilancia critica">
+          <div className="grid gap-2.5 xl:grid-cols-[minmax(0,1fr)_300px]">
+            <div className="grid gap-2.5 md:grid-cols-2">
+              <InputField
+                label="Nombre"
+                value={project.clientContact.name}
+                onChange={(value) => onNestedFieldChange(project.id, 'clientContact', 'name', value)}
+              />
+              <InputField
+                label="Cargo"
+                value={project.clientContact.title}
+                onChange={(value) => onNestedFieldChange(project.id, 'clientContact', 'title', value)}
+              />
+              <InputField
+                label="Email"
+                type="email"
+                value={project.clientContact.email}
+                onChange={(value) => onNestedFieldChange(project.id, 'clientContact', 'email', value)}
+              />
+              <InputField
+                label="WhatsApp"
+                value={project.clientContact.chat}
+                onChange={(value) => onNestedFieldChange(project.id, 'clientContact', 'chat', value)}
+              />
+            </div>
+            <TextAreaField
+              label="Vigilancia critica"
+              value={project.replacementWatch}
+              onChange={(value) => onFieldChange(project.id, 'replacementWatch', value)}
               rows={3}
             />
           </div>
         </SectionCard>
 
-        <SectionCard title="Contacto principal del cliente">
-          <div className="grid gap-3 md:grid-cols-2">
-            <InputField
-              label="Nombre"
-              value={project.clientContact.name}
-              onChange={(value) => onNestedFieldChange(project.id, 'clientContact', 'name', value)}
-            />
-            <InputField
-              label="Cargo"
-              value={project.clientContact.title}
-              onChange={(value) => onNestedFieldChange(project.id, 'clientContact', 'title', value)}
-            />
-            <InputField
-              label="Email"
-              type="email"
-              value={project.clientContact.email}
-              onChange={(value) => onNestedFieldChange(project.id, 'clientContact', 'email', value)}
-            />
-            <InputField
-              label="WhatsApp"
-              value={project.clientContact.chat}
-              onChange={(value) => onNestedFieldChange(project.id, 'clientContact', 'chat', value)}
-            />
-          </div>
-        </SectionCard>
-
         <SectionCard
-          title="Equipo asignado"
+          title="Personal asignado"
           actionLabel="Agregar rol"
           onAction={() => onAddListItem(project.id, 'teamAssigned', { role: '', name: '', dedication: '' })}
         >
-          <div className="space-y-2.5">
+          <div className="space-y-2">
             {project.teamAssigned.map((member) => (
-              <EditableRow
+              <TeamAssignedRow
                 key={member.id}
-                fields={[
-                  {
-                    label: 'Rol',
-                    value: member.role,
-                    onChange: (value) => onListItemChange(project.id, 'teamAssigned', member.id, 'role', value),
-                  },
-                  {
-                    label: 'Nombre',
-                    value: member.name,
-                    onChange: (value) => onListItemChange(project.id, 'teamAssigned', member.id, 'name', value),
-                  },
-                  {
-                    label: 'Dedicacion',
-                    value: member.dedication,
-                    onChange: (value) => onListItemChange(project.id, 'teamAssigned', member.id, 'dedication', value),
-                  },
-                ]}
+                name={member.name}
+                role={member.role}
+                occupation={member.dedication}
+                onNameChange={(value) => onListItemChange(project.id, 'teamAssigned', member.id, 'name', value)}
+                onRoleChange={(value) => onListItemChange(project.id, 'teamAssigned', member.id, 'role', value)}
+                onOccupationChange={(value) => onListItemChange(project.id, 'teamAssigned', member.id, 'dedication', value)}
                 onRemove={() => onRemoveListItem(project.id, 'teamAssigned', member.id)}
               />
             ))}
           </div>
         </SectionCard>
 
-        <div className="grid gap-4 xl:grid-cols-2">
-          <SectionCard title="Alertas y riesgos / decisiones abiertas">
-            <div className="grid gap-3 xl:grid-cols-2">
-              <TextAreaField
-                label="Alertas activas"
-                value={project.alertsAndRisks}
-                onChange={(value) => onFieldChange(project.id, 'alertsAndRisks', value)}
-                rows={4}
-              />
-              <TextAreaField
-                label="Temas por decidir"
-                value={project.openDecisions}
-                onChange={(value) => onFieldChange(project.id, 'openDecisions', value)}
-                rows={4}
-              />
-            </div>
-          </SectionCard>
-
-          <SectionCard title="Reemplazo y reuniones clave">
+        <SectionCard title="Alertas y decisiones">
+          <div className="grid gap-2.5 xl:grid-cols-2">
             <TextAreaField
-              label="Vigilancia critica"
-              value={project.replacementWatch}
-              onChange={(value) => onFieldChange(project.id, 'replacementWatch', value)}
-              rows={4}
+              label="Alertas activas"
+              value={project.alertsAndRisks}
+              onChange={(value) => onFieldChange(project.id, 'alertsAndRisks', value)}
+              rows={3}
             />
-          </SectionCard>
-        </div>
+            <TextAreaField
+              label="Temas por decidir"
+              value={project.openDecisions}
+              onChange={(value) => onFieldChange(project.id, 'openDecisions', value)}
+              rows={3}
+            />
+          </div>
+        </SectionCard>
 
         <SectionCard
           title="Reuniones frecuentes / importantes"
           actionLabel="Agregar reunion"
+          actionIcon="plus"
           onAction={() => onAddListItem(project.id, 'importantMeetings', { title: '', date: '', participants: '', objective: '' })}
         >
-          <div className="space-y-2.5">
+          <div className="space-y-2">
             {project.importantMeetings.map((meeting) => (
               <EditableRow
                 key={meeting.id}
+                compact
                 fields={[
                   {
                     label: 'Reunion',
@@ -1075,91 +1607,103 @@ function ProjectDetailPanel({
           </div>
         </SectionCard>
 
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
-          <SectionCard title="Comentarios internos">
+        <SectionCard title="Notas internas y bitacora">
+          <div className="grid gap-2.5 xl:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)]">
             <TextAreaField
-              label="Notas internas editables"
+              label="Comentarios internos"
               value={project.internalComments}
               onChange={(value) => onFieldChange(project.id, 'internalComments', value)}
-              rows={5}
+              rows={3}
             />
-          </SectionCard>
+            <CommentComposer value={pendingComment} onChange={setPendingComment} onSubmit={onAddComment} />
+          </div>
 
-          <SectionCard title="Bitacora de comentarios">
-            <div className="space-y-2.5">
-              <TextAreaField
-                label="Nuevo comentario"
-                value={pendingComment}
-                onChange={setPendingComment}
-                rows={3}
-                placeholder="Escribe una observacion, decision o alerta operativa..."
-              />
-              <button className="action-button action-button-primary" type="button" onClick={onAddComment}>
-                Agregar comentario
-              </button>
-
-              <div className="space-y-2">
-                {project.commentLog.map((comment) => (
-                  <article
-                    key={comment.id}
-                    className={`rounded-[0.95rem] border px-3 py-3 text-sm ${
-                      comment.resolved
-                        ? 'border-emerald-300/50 bg-emerald-50 text-slate-700'
-                        : 'border-[#bfd9ff] bg-white/80 text-slate-800'
-                    }`}
-                  >
-                    <div className="mb-2 flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between">
-                      <p className="text-[11px] uppercase tracking-[0.14em] text-[#023BFD]/60">
-                        {formatDate(comment.createdAt, { timeStyle: 'short' })}
-                      </p>
-                      <button
-                        className="rounded-full border border-[#bfd9ff] px-2.5 py-1 text-[11px] text-[#000083] transition hover:bg-[#bfd9ff]/35"
-                        type="button"
-                        onClick={() => onToggleCommentResolved(project.id, comment.id)}
-                      >
-                        {comment.resolved ? 'Reabrir' : 'Marcar resuelto'}
-                      </button>
-                    </div>
-                    <p className="leading-5">{comment.message}</p>
-                  </article>
-                ))}
-
-                {!project.commentLog.length ? (
-                  <p className="rounded-[0.95rem] border border-dashed border-[#bfd9ff] bg-white/55 px-3 py-4 text-sm text-slate-500">
-                    Aun no hay comentarios registrados para este proyecto.
+          <div className="space-y-2">
+            {project.commentLog.map((comment) => (
+              <article
+                key={comment.id}
+                className={`rounded-[0.95rem] border px-3 py-2.5 text-sm ${
+                  comment.resolved
+                    ? 'border-emerald-300/50 bg-emerald-50 text-slate-700'
+                    : 'border-[#bfd9ff] bg-white/80 text-slate-800'
+                }`}
+              >
+                <div className="mb-1.5 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-[10px] uppercase tracking-[0.12em] text-[#023BFD]/60">
+                    {formatDate(comment.createdAt, { timeStyle: 'short' })}
                   </p>
-                ) : null}
-              </div>
-            </div>
-          </SectionCard>
-        </div>
+                  <button
+                    className="rounded-full border border-[#bfd9ff] px-2.5 py-1 text-[10px] text-[#000083] transition hover:bg-[#bfd9ff]/35"
+                    type="button"
+                    onClick={() => onToggleCommentResolved(project.id, comment.id)}
+                  >
+                    {comment.resolved ? 'Reabrir' : 'Marcar resuelto'}
+                  </button>
+                </div>
+                <p className="leading-5">{comment.message}</p>
+              </article>
+            ))}
+
+            {!project.commentLog.length ? (
+              <p className="rounded-[0.95rem] border border-dashed border-[#bfd9ff] bg-white/55 px-3 py-3 text-sm text-slate-500">
+                Aun no hay comentarios registrados para este proyecto.
+              </p>
+            ) : null}
+          </div>
+        </SectionCard>
       </div>
     </div>
   )
 }
 
-function SectionCard({ title, children, actionLabel, onAction }) {
+function SectionCard({ title, children, actionLabel, onAction, actionIcon = null }) {
   return (
-    <section className="rounded-[1.2rem] border border-[#bfd9ff] bg-white/62 p-4 shadow-[0_8px_24px_rgba(16,84,255,0.06)]">
-      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <h3 className="font-display text-base font-semibold text-[#000083]">{title}</h3>
+    <section className="rounded-[1.1rem] border border-[#bfd9ff] bg-white/62 p-3.5 shadow-[0_8px_24px_rgba(16,84,255,0.06)]">
+      <div className="mb-2 flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between">
+        <h3 className="font-display text-[15px] font-semibold text-[#000083]">{title}</h3>
         {actionLabel ? (
-          <button className="action-button w-full sm:w-auto" type="button" onClick={onAction}>
-            {actionLabel}
+          <button
+            aria-label={actionLabel}
+            className={
+              actionIcon === 'plus'
+                ? 'inline-flex h-7 w-7 items-center justify-center rounded-full border border-[#bfd9ff] bg-white/85 text-[#023BFD] transition hover:bg-[#edf4ff]'
+                : 'action-button w-full sm:w-auto'
+            }
+            type="button"
+            onClick={onAction}
+          >
+            {actionIcon === 'plus' ? <span className="text-[18px] leading-none">+</span> : actionLabel}
           </button>
         ) : null}
       </div>
-      <div className="space-y-3">{children}</div>
+      <div className="space-y-2.5">{children}</div>
     </section>
   )
 }
 
-function EditableRow({ fields, onRemove, columns = 3 }) {
+function EditableRow({ fields, onRemove, columns = 3, compact = false }) {
   const gridClass = columns === 4 ? 'xl:grid-cols-4' : 'md:grid-cols-3'
 
   return (
-    <div className="rounded-[1rem] border border-[#bfd9ff] bg-[#f8fbff] p-3">
-      <div className={`grid gap-3 ${gridClass}`}>
+    <div className={`relative rounded-[1rem] border border-[#bfd9ff] bg-[#f8fbff] ${compact ? 'p-2.5 pr-11' : 'p-3 pr-12'}`}>
+      <button
+        aria-label="Eliminar fila"
+        className="absolute right-2.5 top-2.5 inline-flex h-7 w-7 items-center justify-center rounded-full border border-rose-200/70 bg-white/85 text-rose-600 transition hover:bg-rose-50 hover:text-rose-700"
+        type="button"
+        onClick={onRemove}
+      >
+        <svg aria-hidden="true" viewBox="0 0 24 24" className="h-3.5 w-3.5 fill-none stroke-current" strokeWidth="1.8">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M4 7h16" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M10 11v6" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M14 11v6" />
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M6 7l1 12a2 2 0 0 0 2 1h6a2 2 0 0 0 2-1l1-12M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3"
+          />
+        </svg>
+      </button>
+      <div className={`grid ${compact ? 'gap-2.5' : 'gap-3'} ${gridClass}`}>
         {fields.map((field) => (
           <InputField
             key={field.label}
@@ -1170,16 +1714,56 @@ function EditableRow({ fields, onRemove, columns = 3 }) {
           />
         ))}
       </div>
-      <div className="mt-3 flex justify-end">
-        <button
-          className="rounded-full border border-rose-300/40 px-3 py-1 text-xs text-rose-700 transition hover:bg-rose-50"
-          type="button"
-          onClick={onRemove}
-        >
-          Eliminar
-        </button>
+    </div>
+  )
+}
+
+function TeamAssignedRow({ name, role, occupation, onNameChange, onRoleChange, onOccupationChange, onRemove }) {
+  return (
+    <div className="relative rounded-[1rem] border border-[#bfd9ff] bg-[#f8fbff] p-2.5 pr-11">
+      <button
+        aria-label="Eliminar rol"
+        className="absolute right-2.5 top-2.5 inline-flex h-7 w-7 items-center justify-center rounded-full border border-rose-200/70 bg-white/85 text-rose-600 transition hover:bg-rose-50 hover:text-rose-700"
+        type="button"
+        onClick={onRemove}
+      >
+        <svg aria-hidden="true" viewBox="0 0 24 24" className="h-3.5 w-3.5 fill-none stroke-current" strokeWidth="1.8">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M4 7h16" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M10 11v6" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M14 11v6" />
+          <path
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            d="M6 7l1 12a2 2 0 0 0 2 1h6a2 2 0 0 0 2-1l1-12M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3"
+          />
+        </svg>
+      </button>
+
+      <div className="grid gap-2.5 md:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)_180px]">
+        <InputField label="Nombre" value={name} onChange={onNameChange} />
+        <InputField label="Rol" value={role} onChange={onRoleChange} />
+        <OccupationField value={occupation} onChange={onOccupationChange} />
       </div>
     </div>
+  )
+}
+
+function OccupationField({ value, onChange }) {
+  const progress = getOccupationProgress(value)
+
+  return (
+    <label className="field-shell">
+      <span className="field-label">Ocupacion estimada</span>
+      <div className="flex items-center gap-1.5 rounded-[0.82rem] border border-[#bfd9ff] bg-white/86 px-2 py-1">
+        <input
+          className="min-w-0 flex-1 bg-transparent text-[0.94rem] font-medium leading-[1.3] text-[#0f172a] outline-none"
+          value={value}
+          placeholder="80%"
+          onChange={(event) => onChange(event.target.value)}
+        />
+        <ProgressDonut progress={progress} size={32} strokeWidth={4} compactText />
+      </div>
+    </label>
   )
 }
 
@@ -1187,8 +1771,8 @@ function TagField({ label, tags, value, onChange, onAdd, onRemove, placeholder }
   return (
     <div className="field-shell">
       <span className="field-label">{label}</span>
-      <div className="rounded-[1rem] border border-[#bfd9ff] bg-white/68 p-3">
-        <div className="mb-2 flex flex-wrap gap-1.5">
+      <div className="rounded-[1rem] border border-[#bfd9ff] bg-white/68 p-2.5">
+        <div className="mb-1.5 flex flex-wrap gap-1.5">
           {tags.map((tag) => (
             <span
               key={tag}
@@ -1208,7 +1792,7 @@ function TagField({ label, tags, value, onChange, onAdd, onRemove, placeholder }
           {!tags.length ? <span className="text-sm text-slate-500">Aun no hay elementos agregados.</span> : null}
         </div>
 
-        <div className="flex flex-col gap-2 sm:flex-row">
+        <div className="flex flex-col gap-1.5 sm:flex-row">
           <input
             className="field-input"
             value={value}
@@ -1230,9 +1814,9 @@ function TagField({ label, tags, value, onChange, onAdd, onRemove, placeholder }
   )
 }
 
-function InputField({ label, value, onChange, type = 'text', placeholder }) {
+function InputField({ label, value, onChange, type = 'text', placeholder, inputClassName = '' }) {
   return (
-    <label className="field-shell">
+    <label className={`field-shell ${inputClassName}`.trim()}>
       <span className="field-label">{label}</span>
       <input className="field-input" type={type} value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
     </label>
@@ -1244,12 +1828,40 @@ function TextAreaField({ label, value, onChange, rows = 4, placeholder }) {
     <label className="field-shell">
       <span className="field-label">{label}</span>
       <textarea
-        className="field-input min-h-[7rem] resize-y"
+        className="field-input min-h-[5.1rem] resize-y"
         rows={rows}
         value={value}
         placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
       />
+    </label>
+  )
+}
+
+function CommentComposer({ value, onChange, onSubmit }) {
+  return (
+    <label className="field-shell">
+      <span className="field-label">Nuevo comentario</span>
+      <div className="relative">
+        <textarea
+          className="field-input min-h-[5.1rem] resize-y pr-14"
+          rows={3}
+          value={value}
+          placeholder="Escribe una observacion, decision o alerta operativa..."
+          onChange={(event) => onChange(event.target.value)}
+        />
+        <button
+          aria-label="Agregar comentario"
+          className="absolute bottom-2.5 right-2.5 inline-flex h-7 w-7 items-center justify-center rounded-full border border-[#bfd9ff] bg-white/85 text-[#023BFD] transition hover:bg-[#edf4ff]"
+          type="button"
+          onClick={onSubmit}
+        >
+          <svg aria-hidden="true" viewBox="0 0 24 24" className="h-3.5 w-3.5 fill-none stroke-current" strokeWidth="1.8">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 19V5" />
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 11l6-6 6 6" />
+          </svg>
+        </button>
+      </div>
     </label>
   )
 }

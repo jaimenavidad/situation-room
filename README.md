@@ -6,8 +6,8 @@ Aplicacion web interna para gestionar un `Mapa de Compromisos de Proyectos` con 
 
 - React + Vite
 - Tailwind CSS v4
-- LocalStorage para persistencia inicial
-- Sin backend
+- Netlify Blobs para persistencia remota
+- Netlify Functions para lectura y escritura
 - Lista para deploy en Netlify
 
 ## Funcionalidades incluidas
@@ -19,7 +19,8 @@ Aplicacion web interna para gestionar un `Mapa de Compromisos de Proyectos` con 
 - Vista resumen con tarjetas por salud
 - Ficha individual editable
 - Bitacora de comentarios con estado resuelto
-- Persistencia automatica con `localStorage`
+- Persistencia automatica con Netlify Blobs
+- Cache local de resiliencia para desarrollo y fallos temporales de red
 
 ## Comandos
 
@@ -35,6 +36,7 @@ npm run lint
 1. Ejecuta `npm install`.
 2. Inicia el servidor con `npm run dev`.
 3. Abre la URL local que muestra Vite.
+4. El plugin `@netlify/vite-plugin` emula Netlify Functions y Blobs localmente, asi que la app ya puede leer y guardar proyectos sin cambiar de comando.
 
 ## Deploy en Netlify
 
@@ -46,6 +48,10 @@ Publish directory: dist
 ```
 
 El archivo `netlify.toml` ya incluye el redirect SPA para servir `index.html`.
+Las Functions viven en `netlify/functions/` y usan un store site-wide de Netlify Blobs:
+
+- store: `situation-room`
+- key: `projects.json`
 
 ## Pipeline recomendado
 
@@ -68,15 +74,20 @@ src/
   App.jsx
   data/sampleProjects.js
   index.css
+netlify/functions/
+  projects-get.js
+  projects-save.js
 netlify.toml
 vite.config.js
 ```
 
-- `src/App.jsx`: layout principal, estado global, filtros, formularios, CRUD y comentarios.
-- `src/data/sampleProjects.js`: los 4 proyectos ficticios de ejemplo.
+- `src/App.jsx`: layout principal, estado global, filtros, formularios, CRUD, comentarios y persistencia remota.
+- `src/data/sampleProjects.js`: semilla local vacia.
 - `src/index.css`: tipografia, tokens visuales y estilos auxiliares sobre Tailwind.
+- `netlify/functions/projects-get.js`: lee la coleccion completa desde Netlify Blobs.
+- `netlify/functions/projects-save.js`: guarda la coleccion completa en Netlify Blobs.
 - `netlify.toml`: redirect SPA para Netlify.
-- `vite.config.js`: configuracion de Vite con React y Tailwind.
+- `vite.config.js`: configuracion de Vite con React, Tailwind y el plugin de Netlify para emular Functions/Blobs en local.
 
 ## Mejoras futuras sugeridas
 
