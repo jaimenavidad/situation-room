@@ -575,6 +575,7 @@ function App() {
   const [searchQuery, setSearchQuery] = useState('')
   const [pendingComment, setPendingComment] = useState('')
   const [isInitialLoading, setIsInitialLoading] = useState(true)
+  const [appNotice, setAppNotice] = useState(null)
   const [pdfImportState, setPdfImportState] = useState({
     fileName: '',
     isParsing: false,
@@ -585,6 +586,7 @@ function App() {
     parserMeta: null,
   })
   const dossierCloseTimeoutRef = useRef(null)
+  const noticeTimeoutRef = useRef(null)
   const saveTimeoutRef = useRef(null)
   const hasLoadedRemoteRef = useRef(false)
   const hasUserMutatedProjectsRef = useRef(false)
@@ -691,7 +693,7 @@ function App() {
       return undefined
     }
 
-      const flushProjects = () => {
+    const flushProjects = () => {
       if (!hasLoadedRemoteRef.current || !hasUserMutatedProjectsRef.current) {
         return
       }
@@ -735,6 +737,10 @@ function App() {
 
       if (saveTimeoutRef.current) {
         window.clearTimeout(saveTimeoutRef.current)
+      }
+
+      if (noticeTimeoutRef.current) {
+        window.clearTimeout(noticeTimeoutRef.current)
       }
     }
   }, [])
@@ -833,6 +839,18 @@ function App() {
       ...project,
       [fieldName]: (project[fieldName] || []).filter((item) => item !== value),
     }))
+  }
+
+  const showAppNotice = (notice) => {
+    if (noticeTimeoutRef.current) {
+      window.clearTimeout(noticeTimeoutRef.current)
+    }
+
+    setAppNotice({ id: crypto.randomUUID(), ...notice })
+    noticeTimeoutRef.current = window.setTimeout(() => {
+      setAppNotice(null)
+      noticeTimeoutRef.current = null
+    }, 4200)
   }
 
   const addProject = () => {
@@ -983,8 +1001,12 @@ function App() {
     setProjects((currentProjects) => sortProjectsByMilestone([importedProject, ...currentProjects]))
     setSelectedProjectId(importedProject.id)
     setIsDossierClosing(false)
-    setActiveTab('detail')
     setIsPdfImportOpen(false)
+    setActiveTab('portfolio')
+    showAppNotice({
+      title: 'Proyecto creado',
+      message: `${importedProject.name || 'El proyecto importado'} ya esta visible en Portafolio activo.`,
+    })
   }
 
   const addComment = () => {
@@ -1141,6 +1163,38 @@ function App() {
           onConfirm={confirmPdfImport}
         />
       ) : null}
+
+      {appNotice ? <AppNotice notice={appNotice} onDismiss={() => setAppNotice(null)} /> : null}
+    </div>
+  )
+}
+
+function AppNotice({ notice, onDismiss }) {
+  return (
+    <div
+      aria-live="polite"
+      className="fixed bottom-5 left-1/2 z-[60] w-[calc(100%-2rem)] max-w-md -translate-x-1/2 sm:left-auto sm:right-6 sm:w-full sm:translate-x-0"
+      role="status"
+    >
+      <div className="glass-panel modal-shell-enter rounded-[1.35rem] border-emerald-200/90 bg-[linear-gradient(135deg,rgba(236,253,245,0.92),rgba(255,255,255,0.82))] px-4 py-3 shadow-[0_24px_60px_rgba(2,59,253,0.16)]">
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-sm font-bold text-emerald-700 ring-1 ring-inset ring-emerald-200">
+            ✓
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-emerald-700">{notice.title}</p>
+            <p className="mt-1 text-sm leading-5 text-slate-700">{notice.message}</p>
+          </div>
+          <button
+            aria-label="Cerrar confirmacion"
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-white/70 text-base leading-none text-[#000083] ring-1 ring-inset ring-[#bfd9ff] transition hover:bg-white"
+            type="button"
+            onClick={onDismiss}
+          >
+            ×
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
