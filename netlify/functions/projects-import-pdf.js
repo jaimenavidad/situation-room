@@ -1,21 +1,27 @@
 import { Buffer } from 'node:buffer'
 import { existsSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import path from 'node:path'
+import process from 'node:process'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+
+import { PDFParse } from 'pdf-parse'
 
 import { parseProjectPdfText } from './_shared/project-pdf-parser.js'
 
-const require = createRequire(import.meta.url)
-const { PDFParse } = require('pdf-parse')
-
 const resolvePdfWorkerSrc = () => {
   const currentDirectory = path.dirname(fileURLToPath(import.meta.url))
+  const rootDirectory = process.cwd()
   const candidates = [
     path.join(currentDirectory, 'node_modules/pdf-parse/dist/pdf-parse/cjs/pdf.worker.mjs'),
     path.join(currentDirectory, '../node_modules/pdf-parse/dist/pdf-parse/cjs/pdf.worker.mjs'),
+    path.join(currentDirectory, 'node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs'),
+    path.join(currentDirectory, '../node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs'),
     path.join(currentDirectory, 'node_modules/pdf-parse/dist/worker/pdf.worker.mjs'),
     path.join(currentDirectory, '../node_modules/pdf-parse/dist/worker/pdf.worker.mjs'),
+    path.join(rootDirectory, 'node_modules/pdf-parse/dist/pdf-parse/esm/pdf.worker.mjs'),
+    path.join(rootDirectory, 'node_modules/pdf-parse/dist/pdf-parse/cjs/pdf.worker.mjs'),
+    path.join(rootDirectory, 'node_modules/pdf-parse/dist/worker/pdf.worker.mjs'),
+    path.join(rootDirectory, 'node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs'),
   ]
 
   const workerPath = candidates.find((candidate) => existsSync(candidate))
