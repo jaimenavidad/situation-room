@@ -457,6 +457,7 @@ function App() {
   const dossierCloseTimeoutRef = useRef(null)
   const saveTimeoutRef = useRef(null)
   const hasLoadedRemoteRef = useRef(false)
+  const hasUserMutatedProjectsRef = useRef(false)
   const projectsRef = useRef(projects)
   const deferredSearch = useDeferredValue(searchQuery)
 
@@ -534,7 +535,7 @@ function App() {
       }),
     )
 
-    if (!hasLoadedRemoteRef.current) {
+    if (!hasLoadedRemoteRef.current || !hasUserMutatedProjectsRef.current) {
       return undefined
     }
 
@@ -560,8 +561,8 @@ function App() {
       return undefined
     }
 
-    const flushProjects = () => {
-      if (!hasLoadedRemoteRef.current) {
+      const flushProjects = () => {
+      if (!hasLoadedRemoteRef.current || !hasUserMutatedProjectsRef.current) {
         return
       }
 
@@ -637,6 +638,7 @@ function App() {
   )
 
   const updateProject = (projectId, updater) => {
+    hasUserMutatedProjectsRef.current = true
     setProjects((currentProjects) =>
       currentProjects.map((project) => {
         if (project.id !== projectId) {
@@ -704,6 +706,7 @@ function App() {
   }
 
   const addProject = () => {
+    hasUserMutatedProjectsRef.current = true
     const project = emptyProject()
     setProjects((currentProjects) => sortProjectsByMilestone([project, ...currentProjects]))
     setSelectedProjectId(project.id)
