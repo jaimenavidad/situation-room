@@ -8,6 +8,7 @@ const PROJECTS_GET_ENDPOINT = '/.netlify/functions/projects-get'
 const PROJECTS_SAVE_ENDPOINT = '/.netlify/functions/projects-save'
 const PROJECTS_PDF_IMPORT_ENDPOINT = '/.netlify/functions/projects-import-pdf'
 const SAVE_DEBOUNCE_MS = 600
+const THEME_STORAGE_KEY = 'situation-room-theme-mode'
 
 const initiativeOptions = [
   'cloud computing',
@@ -71,6 +72,20 @@ const splitTags = (value) =>
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean)
+
+const getInitialThemeMode = () => {
+  if (typeof window === 'undefined') {
+    return 'light'
+  }
+
+  const storedTheme = window.localStorage.getItem(THEME_STORAGE_KEY)
+
+  if (storedTheme === 'light' || storedTheme === 'dark') {
+    return storedTheme
+  }
+
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
 
 const inferTechnologies = (initiativeType) => {
   const mapped = legacyInitiativeMap[initiativeType] || initiativeType
@@ -391,6 +406,98 @@ const formatOccupationValue = (value) => {
   return trimmed.includes('%') ? trimmed : `${trimmed}%`
 }
 
+const parseOccupationPercentage = (value) => {
+  const match = String(value || '').match(/\d+(?:\.\d+)?/)
+
+  if (!match) {
+    return null
+  }
+
+  return Number(match[0])
+}
+
+const getOccupationSignal = (value) => {
+  const percentage = parseOccupationPercentage(value)
+
+  if (percentage === null || Number.isNaN(percentage)) {
+    return {
+      percentage: 0,
+      label: 'Sin dato',
+      chipClass: 'bg-slate-100 text-slate-500',
+      barClass: 'bg-slate-300',
+      trackClass: 'bg-slate-200/80',
+    }
+  }
+
+  if (percentage <= 39) {
+    return {
+      percentage,
+      label: 'Subutilizado / riesgo de baja asignacion',
+      chipClass: 'bg-rose-50 text-rose-700 ring-rose-200',
+      barClass: 'bg-rose-500',
+      trackClass: 'bg-rose-100',
+    }
+  }
+
+  if (percentage <= 59) {
+    return {
+      percentage,
+      label: 'Utilizacion baja',
+      chipClass: 'bg-orange-50 text-orange-700 ring-orange-200',
+      barClass: 'bg-orange-400',
+      trackClass: 'bg-orange-100',
+    }
+  }
+
+  if (percentage <= 74) {
+    return {
+      percentage,
+      label: 'Utilizacion aceptable',
+      chipClass: 'bg-amber-50 text-amber-700 ring-amber-200',
+      barClass: 'bg-amber-400',
+      trackClass: 'bg-amber-100',
+    }
+  }
+
+  if (percentage <= 89) {
+    return {
+      percentage,
+      label: 'Buena ocupacion',
+      chipClass: 'bg-emerald-50 text-emerald-700 ring-emerald-200',
+      barClass: 'bg-emerald-400',
+      trackClass: 'bg-emerald-100',
+    }
+  }
+
+  if (percentage <= 100) {
+    return {
+      percentage,
+      label: 'Ocupacion optima',
+      chipClass: 'bg-green-50 text-green-700 ring-green-200',
+      barClass: 'bg-green-600',
+      trackClass: 'bg-green-100',
+    }
+  }
+
+  if (percentage <= 110) {
+    return {
+      percentage,
+      label: 'Leve sobreasignacion controlada',
+      chipClass: 'bg-blue-50 text-blue-700 ring-blue-200',
+      barClass: 'bg-blue-500',
+      trackClass: 'bg-blue-100',
+    }
+  }
+
+  return {
+    percentage,
+    label: 'Sobrecarga / riesgo operativo',
+    chipClass: 'bg-purple-50 text-purple-700 ring-purple-200',
+    barClass: 'bg-purple-600',
+    trackClass: 'bg-purple-100',
+  }
+}
+
 const getTimelineProgress = (startDate, endDate, referenceDate = new Date()) => {
   const start = parseDateAtStartOfDay(startDate)
   const end = parseDateAtStartOfDay(endDate)
@@ -576,6 +683,7 @@ function App() {
   const [pendingComment, setPendingComment] = useState('')
   const [isInitialLoading, setIsInitialLoading] = useState(true)
   const [appNotice, setAppNotice] = useState(null)
+  const [themeMode, setThemeMode] = useState(getInitialThemeMode)
   const [pdfImportState, setPdfImportState] = useState({
     fileName: '',
     isParsing: false,
@@ -596,6 +704,18 @@ function App() {
   useEffect(() => {
     projectsRef.current = projects
   }, [projects])
+
+  useEffect(() => {
+    if (typeof document === 'undefined') {
+      return undefined
+    }
+
+    document.documentElement.dataset.theme = themeMode
+    document.documentElement.style.colorScheme = themeMode
+    window.localStorage.setItem(THEME_STORAGE_KEY, themeMode)
+
+    return undefined
+  }, [themeMode])
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -1061,7 +1181,7 @@ function App() {
   }
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_rgba(191,217,255,0.95),_transparent_26%),radial-gradient(circle_at_top_right,_rgba(2,59,253,0.16),_transparent_34%),linear-gradient(180deg,_#f8fbff_0%,_#eaf2ff_50%,_#dceaff_100%)] text-slate-900">
+    <div className="retro-system-background min-h-screen text-slate-900">
       <div
         className={`app-shell mx-auto flex min-h-screen max-w-7xl flex-col px-4 py-6 sm:px-6 lg:px-8 ${
           isDossierOpen ? 'app-shell-frosted' : ''
@@ -1079,18 +1199,19 @@ function App() {
               </p>
             </div>
 
-            <div className="flex flex-wrap gap-3">
-              <div className="flex flex-wrap gap-3 rounded-full bg-white/58 p-1.5 ring-1 ring-inset ring-[#bfd9ff]">
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap gap-1 rounded-full bg-white/58 p-1 ring-1 ring-inset ring-[#bfd9ff]">
                 <TabButton active={activeTab === 'portfolio'} label="Portafolio" onClick={() => setActiveTab('portfolio')} />
                 <TabButton active={activeTab === 'detail'} label="Nuevo proyecto" onClick={addProject} />
               </div>
               <button
-                className="rounded-full bg-white/70 px-4 py-2 text-sm font-medium text-[#000083] ring-1 ring-inset ring-[#bfd9ff] transition hover:bg-white"
+                className="inline-flex h-9 items-center justify-center rounded-full bg-white/70 px-3.5 text-[13px] font-semibold tracking-[-0.01em] text-[#000083] ring-1 ring-inset ring-[#bfd9ff] transition hover:bg-white"
                 type="button"
                 onClick={openPdfImport}
               >
                 Importar PDF
               </button>
+              <ThemeToggleButton themeMode={themeMode} onToggle={() => setThemeMode((current) => (current === 'dark' ? 'light' : 'dark'))} />
             </div>
           </div>
 
@@ -1204,13 +1325,33 @@ function TabButton({ active, label, onClick }) {
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-full px-4 py-2 text-sm font-medium transition ${
+      className={`inline-flex h-[2.125rem] items-center justify-center whitespace-nowrap rounded-full px-3.5 text-[13px] font-semibold tracking-[-0.01em] transition ${
         active
-          ? 'bg-[#023BFD] text-white shadow-lg shadow-blue-300/40'
+          ? 'bg-[#023BFD] text-white shadow-[0_10px_24px_rgba(2,59,253,0.22)]'
           : 'bg-white/70 text-[#000083] ring-1 ring-inset ring-[#bfd9ff] hover:bg-white'
       }`}
     >
       {label}
+    </button>
+  )
+}
+
+function ThemeToggleButton({ themeMode, onToggle }) {
+  const isDark = themeMode === 'dark'
+
+  return (
+    <button
+      aria-label={`Cambiar a modo ${isDark ? 'claro' : 'oscuro'}`}
+      className="inline-flex h-9 items-center gap-2 rounded-full bg-white/70 px-3 text-[13px] font-semibold tracking-[-0.01em] text-[#000083] ring-1 ring-inset ring-[#bfd9ff] transition hover:bg-white"
+      type="button"
+      onClick={onToggle}
+    >
+      <span
+        className={`h-2 w-2 rounded-full shadow-[0_0_14px_rgba(2,59,253,0.22)] ${
+          isDark ? 'bg-[#000083]' : 'bg-[#bfd9ff]'
+        }`}
+      />
+      <span>{isDark ? 'Dark' : 'Light'}</span>
     </button>
   )
 }
@@ -1323,21 +1464,13 @@ function PortfolioProjectCard({ project, isSelected, onOpenDetail }) {
       role: member.role?.trim() || 'Rol pendiente',
       name: member.name?.trim() || 'Sin nombre',
     })) || []
-  const teamAssignedItems =
-    project.teamAssigned?.length
-      ? project.teamAssigned.map((member) => {
-          const name = member.name?.trim()
-          const role = member.role?.trim()
-          const occupation = formatOccupationValue(member.dedication)
-          const details = [role, occupation].filter(Boolean).join(' · ')
-
-          if (name && details) {
-            return `${name} · ${details}`
-          }
-
-          return name || details || 'Sin asignacion'
-        })
-      : ['Sin asignacion']
+  const occupationItems =
+    project.teamAssigned?.filter((member) => member.name?.trim() || member.role?.trim() || member.dedication?.trim()).map((member) => ({
+      name: member.name?.trim() || 'Sin nombre',
+      role: member.role?.trim() || 'Rol pendiente',
+      occupation: formatOccupationValue(member.dedication) || 'Sin %',
+      signal: getOccupationSignal(member.dedication),
+    })) || []
 
   return (
     <article
@@ -1376,25 +1509,22 @@ function PortfolioProjectCard({ project, isSelected, onOpenDetail }) {
 
           <div className="grid gap-2.5 md:grid-cols-2 xl:grid-cols-4">
             <CompactPersonnelFacts items={personnelOverviewItems} />
-            <CompactFact label="Fecha inicio" value={project.startDate ? formatDate(project.startDate) : 'Pendiente'} />
-            <CompactFact label="Fecha fin" value={project.endDate ? formatDate(project.endDate) : 'Pendiente'} />
+            <CompactDatesFact startDate={project.startDate} endDate={project.endDate} />
           </div>
 
           <div className="mt-2.5 space-y-2.5">
-            <CompactStrip label="Riesgo principal" value={project.mainRisk || 'Sin riesgo registrado.'} />
+            <CompactStrip label="Riesgos principales" value={project.mainRisk || 'Sin riesgo registrado.'} variant="bullets" />
             <CompactStrip
-              label="Objetivo actual"
-              value={project.currentObjective || project.description || 'Sin objetivo actual definido.'}
+              label="Objetivos actuales"
+              value={project.currentObjective || project.description || 'Sin objetivos actuales definidos.'}
+              variant="bullets"
             />
           </div>
         </div>
 
         <div className="min-w-0 border-b border-[#bfd9ff]/75 p-4 xl:border-b-0 xl:border-r">
           <div className="space-y-2.5">
-            <LabelCluster
-              label="Personal asignado"
-              items={teamAssignedItems}
-            />
+            <OccupationCluster items={occupationItems} />
             <LabelCluster
               label="Tecnologias"
               items={project.technologiesUsed?.length ? project.technologiesUsed : ['Por definir']}
@@ -1404,27 +1534,28 @@ function PortfolioProjectCard({ project, isSelected, onOpenDetail }) {
             <CompactStrip
               label="Vigilancia critica"
               value={project.replacementWatch || 'Sin vigilancia critica registrada.'}
+              variant="watch"
             />
           </div>
         </div>
 
         <div className="min-w-0 flex h-full flex-col gap-2.5 p-4">
           <div
-            className={`flex min-h-[8.9rem] flex-1 flex-col rounded-[1.2rem] border p-3.5 ${
+            className={`flex min-h-[7.6rem] flex-1 flex-col rounded-[1.2rem] border px-3 py-2.5 ${
               controlToneCardClasses[controlTone] || controlToneCardClasses.Estable
             }`}
           >
             <div className="flex items-center justify-between gap-2">
               <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#023BFD]/68">Control</p>
               <span
-                className={`rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] ${
+                className={`rounded-full px-1.5 py-[0.12rem] text-[8px] font-semibold uppercase tracking-[0.08em] ${
                   controlToneChipClasses[controlTone] || controlToneChipClasses.Estable
                 }`}
               >
                 {controlTone}
               </span>
             </div>
-            <p className="mt-2 line-clamp-4 text-sm leading-5 text-slate-700">
+            <p className="mt-1.5 line-clamp-6 text-[12px] leading-4 text-slate-600">
               {project.controlSummary || 'Sin comentario ejecutivo registrado.'}
             </p>
           </div>
@@ -1456,17 +1587,24 @@ function PortfolioProjectCard({ project, isSelected, onOpenDetail }) {
   )
 }
 
-function CompactFact({ label, value, accent = false }) {
+function CompactDatesFact({ startDate, endDate }) {
+  const dateItems = [
+    { label: 'Inicio', value: startDate ? formatDate(startDate) : 'Pendiente' },
+    { label: 'Fin', value: endDate ? formatDate(endDate) : 'Pendiente' },
+  ]
+
   return (
-    <div
-      className={`rounded-[1.05rem] px-3.5 py-2.5 ring-1 ring-inset ${
-        accent
-          ? 'bg-[linear-gradient(180deg,rgba(2,59,253,0.10),rgba(255,255,255,0.84))] ring-[#023BFD]/18'
-          : 'bg-[#f8fbff]/88 ring-[#bfd9ff]'
-      }`}
-    >
-      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#023BFD]/70">{label}</p>
-      <p className="mt-1.5 line-clamp-2 text-sm font-medium leading-5 text-[#000083]">{value || 'Sin definir'}</p>
+    <div className="rounded-[1.05rem] bg-[#f8fbff]/88 px-3.5 py-2.5 ring-1 ring-inset ring-[#bfd9ff] md:col-span-2 xl:col-span-2">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#023BFD]/70">Fechas</p>
+      <div className="mt-1.5 flex max-h-[2.2rem] flex-col gap-0.5 overflow-hidden text-[11px] leading-4 text-slate-500">
+        {dateItems.map((item) => (
+          <p key={item.label} className="min-w-0 truncate">
+            <span className="font-medium text-[#000083]">{item.label}</span>
+            <span className="mx-1 text-[#023BFD]/28">•</span>
+            <span>{item.value}</span>
+          </p>
+        ))}
+      </div>
     </div>
   )
 }
@@ -1498,11 +1636,44 @@ function CompactPersonnelFacts({ items }) {
   )
 }
 
-function CompactStrip({ label, value }) {
+const compactBulletItems = (value) => {
+  const normalizedValue = String(value || '').trim()
+
+  if (!normalizedValue) {
+    return []
+  }
+
+  return normalizedValue
+    .split(/\n|•|;|\s+-\s+/)
+    .map((item) => item.replace(/^[\s*-]+/, '').replace(/^\d+[.)]\s*/, '').trim())
+    .filter(Boolean)
+    .slice(0, 3)
+}
+
+function CompactStrip({ label, value, variant = 'text' }) {
+  const isBulletVariant = variant === 'bullets' || variant === 'watch'
+  const bulletItems = isBulletVariant ? compactBulletItems(value) : []
+  const bulletListClass =
+    variant === 'watch'
+      ? 'mt-1 flex max-h-[4.55rem] flex-col gap-0.5 overflow-hidden text-[11px] leading-4 text-slate-600'
+      : 'mt-1 flex max-h-[3rem] flex-col gap-0.5 overflow-hidden text-[11px] leading-4 text-slate-600'
+  const bulletTextClass = variant === 'watch' ? 'line-clamp-2 min-w-0' : 'line-clamp-1 min-w-0'
+
   return (
     <div className="rounded-[1.05rem] border border-[#bfd9ff] bg-white/74 px-3.5 py-2.5">
       <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#023BFD]/70">{label}</p>
-      <p className="mt-1.5 line-clamp-2 text-sm leading-5 text-slate-700">{value}</p>
+      {isBulletVariant && bulletItems.length ? (
+        <ul className={bulletListClass}>
+          {bulletItems.map((item) => (
+            <li key={item} className="flex min-w-0 items-start gap-1.5">
+              <span className="mt-[0.42rem] h-1 w-1 shrink-0 rounded-full bg-[#023BFD]/28" />
+              <span className={bulletTextClass}>{item}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-1.5 line-clamp-2 text-sm leading-5 text-slate-700">{value}</p>
+      )}
     </div>
   )
 }
@@ -1530,12 +1701,59 @@ function LabelCluster({ label, items, subtle = false }) {
   )
 }
 
+function OccupationCluster({ items }) {
+  const visibleItems = items.slice(0, 5)
+  const remainingCount = items.length - visibleItems.length
+
+  return (
+    <div className="rounded-[1.05rem] border border-[#bfd9ff] bg-white/72 px-3.5 py-2.5">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#023BFD]/70">Ocupacion %</p>
+      {visibleItems.length ? (
+        <div className="mt-1.5 flex max-h-[3.4rem] flex-col gap-1 overflow-hidden">
+          {visibleItems.map((item) => {
+            const barWidth = `${Math.min(Math.max(item.signal.percentage, 4), 100)}%`
+
+            return (
+              <span
+                key={`${item.name}-${item.role}-${item.occupation}`}
+                className="grid min-w-0 grid-cols-[minmax(0,4fr)_minmax(4.85rem,1fr)] items-center gap-1"
+              >
+                <span className="inline-flex min-w-0 items-center rounded-full bg-[#dfeaff] px-2 py-0.5 text-[11px] font-medium text-[#000083]">
+                  <span className="min-w-0 truncate">
+                    <span className="font-semibold">{item.role}</span>
+                    <span className="mx-1 text-[#023BFD]/28">•</span>
+                    <span>{item.name}</span>
+                  </span>
+                </span>
+                <span
+                  className={`inline-flex min-w-0 items-center justify-between gap-1 rounded-full px-1.5 py-0.5 text-[11px] font-medium ring-1 ring-inset ${item.signal.chipClass}`}
+                  title={`${item.occupation} · ${item.signal.label}`}
+                >
+                  <span className="shrink-0 font-semibold tabular-nums">{item.occupation}</span>
+                  <span className={`h-1 min-w-4 flex-1 overflow-hidden rounded-full ${item.signal.trackClass}`}>
+                    <span className={`block h-full rounded-full ${item.signal.barClass}`} style={{ width: barWidth }} />
+                  </span>
+                </span>
+              </span>
+            )
+          })}
+          {remainingCount > 0 ? (
+            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">+{remainingCount}</span>
+          ) : null}
+        </div>
+      ) : (
+        <p className="mt-1.5 text-[11px] leading-4 text-slate-500">Sin ocupacion registrada.</p>
+      )}
+    </div>
+  )
+}
+
 function CompactContactCard({ contact }) {
   const hasContactInfo = contact?.name || contact?.title || contact?.email || contact?.chat
 
   return (
     <div className="rounded-[1.05rem] border border-[#bfd9ff] bg-white/72 px-3 py-2.5">
-      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#023BFD]/70">Contacto cliente</p>
+      <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#023BFD]/70">Main POC - Cliente</p>
       {hasContactInfo ? (
         <div className="mt-1.5 space-y-1">
           <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
@@ -1554,7 +1772,6 @@ function CompactContactCard({ contact }) {
     </div>
   )
 }
-
 function ProgressDonut({ progress, size = 78, strokeWidth = 8, caption = 'elapsed', compactText = false }) {
   const ringThemes = {
     unscheduled: {
@@ -1902,7 +2119,7 @@ function PdfImportModal({
                     <SectionCard title="Riesgos y contexto">
                       <div className="grid gap-2.5 xl:grid-cols-2">
                         <TextAreaField
-                          label={renderConfidenceLabel('Riesgo principal', confidenceByField.mainRisk)}
+                          label={renderConfidenceLabel('Riesgos principales', confidenceByField.mainRisk)}
                           value={draft.mainRisk}
                           rows={3}
                           onChange={(value) => onFieldChange('mainRisk', value)}
@@ -1914,7 +2131,7 @@ function PdfImportModal({
                           onChange={(value) => onFieldChange('alertsAndRisks', value)}
                         />
                         <TextAreaField
-                          label={renderConfidenceLabel('Objetivo actual', confidenceByField.currentObjective)}
+                          label={renderConfidenceLabel('Objetivos actuales', confidenceByField.currentObjective)}
                           value={draft.currentObjective}
                           rows={3}
                           onChange={(value) => onFieldChange('currentObjective', value)}
@@ -1928,7 +2145,7 @@ function PdfImportModal({
                       </div>
                     </SectionCard>
 
-                    <SectionCard title="Contacto del cliente">
+                    <SectionCard title="Main POC - Cliente">
                       <div className="grid gap-2.5 md:grid-cols-2">
                         <InputField
                           label={renderConfidenceLabel('Nombre', confidenceByField['clientContact.name'])}
@@ -1999,10 +2216,10 @@ function formatImportFieldName(field) {
   const labels = {
     description: 'Descripcion',
     controlSummary: 'Resumen ejecutivo de control',
-    mainRisk: 'Riesgo principal',
-    currentObjective: 'Objetivo actual',
+    mainRisk: 'Riesgos principales',
+    currentObjective: 'Objetivos actuales',
     technologiesUsed: 'Tecnologias',
-    clientContact: 'Contacto cliente',
+    clientContact: 'Main POC - Cliente',
     replacementWatch: 'Vigilancia critica',
     alertsAndRisks: 'Alertas activas',
     openDecisions: 'Temas por decidir',
@@ -2235,13 +2452,13 @@ function ProjectDetailPanel({
 
           <div className="grid gap-2.5 xl:grid-cols-2">
             <TextAreaField
-              label="Riesgos"
+              label="Riesgos principales"
               value={project.mainRisk}
               onChange={(value) => onFieldChange(project.id, 'mainRisk', value)}
               rows={2}
             />
             <TextAreaField
-              label="Objetivo actual"
+              label="Objetivos actuales"
               value={project.currentObjective}
               onChange={(value) => onFieldChange(project.id, 'currentObjective', value)}
               rows={2}
@@ -2249,7 +2466,7 @@ function ProjectDetailPanel({
           </div>
         </SectionCard>
 
-        <SectionCard title="Contacto cliente y vigilancia critica">
+        <SectionCard title="Main POC - Cliente y vigilancia critica">
           <div className="grid gap-2.5 xl:grid-cols-[minmax(0,1fr)_300px]">
             <div className="grid gap-2.5 md:grid-cols-2">
               <InputField
