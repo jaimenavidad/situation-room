@@ -47,6 +47,25 @@ const knownFieldLabels = [
   'Archived',
 ]
 
+const roleHints = [
+  'Integration Engineer',
+  'Full-stack Engineer',
+  'Project Manager',
+  'Webflow Dev',
+  'QA Analyst',
+  'Tech Lead',
+  'Designer',
+  'Copywriter',
+  'Developer',
+  'Backend',
+  'Frontend',
+  'DevOps',
+  'UXUI',
+  'CRS',
+  'QA',
+  'PM',
+]
+
 const stripEmpty = (value) => {
   const normalized = String(value || '').replace(/\s+/g, ' ').trim()
   return normalized && normalized.toLowerCase() !== 'empty' ? normalized : ''
@@ -131,15 +150,41 @@ const normalizePdfText = (text) =>
         !/^\d{1,2}\/\d{1,2}\/\d{2,4},/.test(line),
     )
 
-const getLineValue = (lines, matcher) => {
-  const line = lines.find((item) => matcher.test(item))
+const isKnownLabelOrHeading = (value) => {
+  const normalized = stripEmpty(value).toLowerCase()
 
-  if (!line) {
+  if (!normalized) {
+    return false
+  }
+
+  return [...knownFieldLabels, ...headings].some((label) => {
+    const normalizedLabel = label.toLowerCase()
+    return normalized === normalizedLabel || normalized.startsWith(normalizedLabel)
+  })
+}
+
+const getFieldValue = (lines, label) => {
+  const normalizedLabel = label.toLowerCase()
+  const lineIndex = lines.findIndex((line) => line.toLowerCase().startsWith(normalizedLabel))
+
+  if (lineIndex === -1) {
     return ''
   }
 
-  const match = line.match(matcher)
-  return stripEmpty(match?.[1])
+  const line = lines[lineIndex]
+  const inlineValue = stripEmpty(line.slice(label.length))
+
+  if (inlineValue) {
+    return inlineValue
+  }
+
+  const nextLine = lines[lineIndex + 1]
+
+  if (!nextLine || isKnownLabelOrHeading(nextLine)) {
+    return ''
+  }
+
+  return stripEmpty(nextLine)
 }
 
 const getSectionLines = (lines, heading) => {
@@ -169,11 +214,28 @@ const parseAssignedBoosters = (lines) =>
     .filter(
       (line) =>
         line &&
-        !/^ID Booster Role Occupation Billable$/i.test(line) &&
+        !/^ID\s*Booster\s*Role\s*Occupation\s*Billable$/i.test(line) &&
         !/^New page$/i.test(line),
     )
     .map((line) => line.replace(/^\[\]\s*/, '').trim())
     .map((line) => {
+      const compactMatch = line.match(/^(.*?)(\d{1,3})%(?:\s*(yes|no))?$/i)
+
+      if (compactMatch) {
+        const dedication = compactMatch[2]
+        const assignment = compactMatch[1].trim()
+        const role = roleHints.find((hint) => assignment.toLowerCase().endsWith(hint.toLowerCase())) || ''
+        const name = role ? assignment.slice(0, -role.length).trim() : assignment
+
+        if (name || role) {
+          return {
+            name,
+            role,
+            dedication,
+          }
+        }
+      }
+
       const tokens = line.split(/\s+/).filter(Boolean)
 
       if (!tokens.length) {
@@ -313,17 +375,17 @@ const buildMissingFields = (draft) => {
 export const parseProjectPdfText = (text) => {
   const lines = normalizePdfText(text)
   const title = stripEmpty(lines[0])
-  const client = getLineValue(lines, /^Client\s+(.+)$/i)
-  const description = getLineValue(lines, /^Description\s+(.+)$/i)
-  const projectType = getLineValue(lines, /^Project Type\s+(.+)$/i)
-  const status = getLineValue(lines, /^Status\s+(.+)$/i)
-  const startDate = normalizeDate(getLineValue(lines, /^Start Date\s+(.+)$/i))
-  const endDate = normalizeDate(getLineValue(lines, /^End Date\s+(.+)$/i))
-  const effortEstimated = getLineValue(lines, /^Effort Estimated\s+(.+)$/i)
-  const effortReal = getLineValue(lines, /^Effort Real\s+(.+)$/i)
-  const risksHealth = getLineValue(lines, /^Risks Health\s+(.+)$/i)
-  const roadmapHealth = getLineValue(lines, /^Roadmap Health\s+(.+)$/i)
-  const tags = getLineValue(lines, /^Tags\s+(.+)$/i)
+  const client = getFieldValue(lines, 'Client')
+  const description = getFieldValue(lines, 'Description')
+  const projectType = getFieldValue(lines, 'Project Type')
+  const status = getFieldValue(lines, 'Status')
+  const startDate = normalizeDate(getFieldValue(lines, 'Start Date'))
+  const endDate = normalizeDate(getFieldValue(lines, 'End Date'))
+  const effortEstimated = getFieldValue(lines, 'Effort Estimated')
+  const effortReal = getFieldValue(lines, 'Effort Real')
+  const risksHealth = getFieldValue(lines, 'Risks Health')
+  const roadmapHealth = getFieldValue(lines, 'Roadmap Health')
+  const tags = getFieldValue(lines, 'Tags')
 
   const assignedBoosters = parseAssignedBoosters(getSectionLines(lines, 'Assigned Boosters'))
   const milestone = parseMilestone(getSectionLines(lines, 'Roadmap Milestones'))
@@ -365,7 +427,7 @@ export const parseProjectPdfText = (text) => {
     missingFields: buildMissingFields(draft),
     parserMeta: {
       detectedSections: headings.filter((heading) => lines.includes(heading)),
-      leaders: getLineValue(lines, /^Leaders\s+(.+)$/i),
+      leaders: getFieldValue(lines, 'Leaders'),
       status,
       risksHealth,
       roadmapHealth,
