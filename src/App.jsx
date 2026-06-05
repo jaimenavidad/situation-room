@@ -1042,6 +1042,22 @@ function App() {
     setActiveTab('detail')
   }
 
+  const deleteProject = (projectId) => {
+    const projectToDelete = projectsRef.current.find((project) => project.id === projectId)
+    const nextProjects = sortProjectsByMilestone(projectsRef.current.filter((project) => project.id !== projectId))
+
+    hasUserMutatedProjectsRef.current = true
+    setProjects(nextProjects)
+    setSelectedProjectId(nextProjects[0]?.id || '')
+    setPendingComment('')
+    setIsDossierClosing(false)
+    setActiveTab('portfolio')
+    showAppNotice({
+      title: 'Proyecto eliminado',
+      message: `${projectToDelete?.name || 'El proyecto'} fue removido del portafolio activo.`,
+    })
+  }
+
   const openPdfImport = () => {
     setPdfImportState({
       fileName: '',
@@ -1328,6 +1344,7 @@ function App() {
           setPendingComment={setPendingComment}
           onAddComment={addComment}
           onToggleCommentResolved={toggleCommentResolved}
+          onDeleteProject={deleteProject}
         />
       ) : null}
 
@@ -2420,6 +2437,7 @@ function DossierModal({
   setPendingComment,
   onAddComment,
   onToggleCommentResolved,
+  onDeleteProject,
 }) {
   return (
     <div
@@ -2462,6 +2480,7 @@ function DossierModal({
               setPendingComment={setPendingComment}
               onAddComment={onAddComment}
               onToggleCommentResolved={onToggleCommentResolved}
+              onDeleteProject={onDeleteProject}
               modal
             />
           </div>
@@ -2484,9 +2503,25 @@ function ProjectDetailPanel({
   setPendingComment,
   onAddComment,
   onToggleCommentResolved,
+  onDeleteProject,
   modal = false,
 }) {
   const [technologyTagDraft, setTechnologyTagDraft] = useState('')
+  const [confirmDeleteProjectId, setConfirmDeleteProjectId] = useState('')
+  const isConfirmingDelete = confirmDeleteProjectId === project.id
+
+  const handleDeleteProject = () => {
+    if (!onDeleteProject) {
+      return
+    }
+
+    if (!isConfirmingDelete) {
+      setConfirmDeleteProjectId(project.id)
+      return
+    }
+
+    onDeleteProject(project.id)
+  }
 
   return (
     <div
@@ -2506,6 +2541,19 @@ function ProjectDetailPanel({
           <p className="mt-0.5 max-w-2xl text-[13px] text-slate-700">
             Ultima actualizacion registrada: {formatDate(project.lastUpdated, { timeStyle: 'short' })}
           </p>
+          {onDeleteProject ? (
+            <button
+              className={`mt-2 inline-flex rounded-full border px-3 py-1.5 text-[11px] font-semibold transition ${
+                isConfirmingDelete
+                  ? 'border-rose-500 bg-rose-600 text-white shadow-[0_10px_22px_rgba(244,63,94,0.24)]'
+                  : 'border-rose-200/70 bg-rose-50/80 text-rose-600 hover:bg-rose-100'
+              }`}
+              type="button"
+              onClick={handleDeleteProject}
+            >
+              {isConfirmingDelete ? 'Confirmar eliminacion' : 'Eliminar proyecto'}
+            </button>
+          ) : null}
         </div>
         <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
           <div className="rounded-[0.95rem] border border-[#bfd9ff] bg-white/65 px-3 py-1.5 text-sm text-slate-700">

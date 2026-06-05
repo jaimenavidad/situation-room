@@ -29,17 +29,17 @@
     linear-gradient(180deg, rgba(248, 251, 255, 0.08), rgba(220, 234, 255, 0.04)),
     radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.08), transparent 34rem);
   --surface-glass:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.2) 0%, rgba(255, 255, 255, 0.045) 34%, transparent 58%),
-    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.18), transparent 32rem),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.42) 0%, rgba(245, 249, 255, 0.28) 100%),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.32) 0%, rgba(191, 217, 255, 0.11) 100%);
+    linear-gradient(135deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.03) 34%, transparent 58%),
+    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.11), transparent 32rem),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.28) 0%, rgba(245, 249, 255, 0.16) 100%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.22) 0%, rgba(191, 217, 255, 0.07) 100%);
   --surface-glass-strong:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.26) 0%, rgba(255, 255, 255, 0.06) 38%, transparent 62%),
-    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.22), transparent 32rem),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.48), rgba(245, 249, 255, 0.34)),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.38), rgba(191, 217, 255, 0.14));
-  --surface-card: rgba(255, 255, 255, 0.34);
-  --surface-card-soft: rgba(248, 251, 255, 0.3);
+    linear-gradient(135deg, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0.04) 38%, transparent 62%),
+    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.15), transparent 32rem),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.34), rgba(245, 249, 255, 0.22)),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.28), rgba(191, 217, 255, 0.1));
+  --surface-card: rgba(255, 255, 255, 0.24);
+  --surface-card-soft: rgba(248, 251, 255, 0.2);
   --surface-border: rgba(191, 217, 255, 0.64);
   --surface-text: #000083;
   --surface-body: #0f172a;
@@ -50,17 +50,17 @@
   --surface-shadow:
     0 34px 86px rgba(2, 59, 253, 0.13),
     0 10px 28px rgba(0, 0, 131, 0.06),
-    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    inset 0 1px 0 rgba(255, 255, 255, 0.68),
     inset 0 -1px 0 rgba(0, 0, 131, 0.06);
   --surface-card-shadow:
     0 20px 54px rgba(2, 59, 253, 0.1),
-    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
     inset 0 -1px 0 rgba(0, 0, 131, 0.04);
   --surface-micro-shadow:
     0 8px 22px rgba(2, 59, 253, 0.06),
-    inset 0 1px 0 rgba(255, 255, 255, 0.62);
-  --glass-blur: blur(34px) saturate(1.28);
-  --glass-blur-soft: blur(26px) saturate(1.18);
+    inset 0 1px 0 rgba(255, 255, 255, 0.42);
+  --glass-blur: blur(20px) saturate(1.16);
+  --glass-blur-soft: blur(14px) saturate(1.1);
 }
 
 * {
@@ -199,17 +199,17 @@ button {
     linear-gradient(180deg, rgba(248, 251, 255, 0.08), rgba(220, 234, 255, 0.04)),
     radial-gradient(circle at 50% 0%, rgba(255, 255, 255, 0.08), transparent 34rem);
   --surface-glass:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.2) 0%, rgba(255, 255, 255, 0.045) 34%, transparent 58%),
-    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.18), transparent 32rem),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.42) 0%, rgba(245, 249, 255, 0.28) 100%),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.32) 0%, rgba(191, 217, 255, 0.11) 100%);
+    linear-gradient(135deg, rgba(255, 255, 255, 0.14) 0%, rgba(255, 255, 255, 0.03) 34%, transparent 58%),
+    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.11), transparent 32rem),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.28) 0%, rgba(245, 249, 255, 0.16) 100%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.22) 0%, rgba(191, 217, 255, 0.07) 100%);
   --surface-glass-strong:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.26) 0%, rgba(255, 255, 255, 0.06) 38%, transparent 62%),
-    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.22), transparent 32rem),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.48), rgba(245, 249, 255, 0.34)),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.38), rgba(191, 217, 255, 0.14));
-  --surface-card: rgba(255, 255, 255, 0.34);
-  --surface-card-soft: rgba(248, 251, 255, 0.3);
+    linear-gradient(135deg, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0.04) 38%, transparent 62%),
+    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.15), transparent 32rem),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.34), rgba(245, 249, 255, 0.22)),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.28), rgba(191, 217, 255, 0.1));
+  --surface-card: rgba(255, 255, 255, 0.24);
+  --surface-card-soft: rgba(248, 251, 255, 0.2);
   --surface-border: rgba(191, 217, 255, 0.64);
   --surface-text: #000083;
   --surface-body: #0f172a;
@@ -220,17 +220,17 @@ button {
   --surface-shadow:
     0 34px 86px rgba(2, 59, 253, 0.13),
     0 10px 28px rgba(0, 0, 131, 0.06),
-    inset 0 1px 0 rgba(255, 255, 255, 0.92),
+    inset 0 1px 0 rgba(255, 255, 255, 0.68),
     inset 0 -1px 0 rgba(0, 0, 131, 0.06);
   --surface-card-shadow:
     0 20px 54px rgba(2, 59, 253, 0.1),
-    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
     inset 0 -1px 0 rgba(0, 0, 131, 0.04);
   --surface-micro-shadow:
     0 8px 22px rgba(2, 59, 253, 0.06),
-    inset 0 1px 0 rgba(255, 255, 255, 0.62);
-  --glass-blur: blur(34px) saturate(1.28);
-  --glass-blur-soft: blur(26px) saturate(1.18);
+    inset 0 1px 0 rgba(255, 255, 255, 0.42);
+  --glass-blur: blur(20px) saturate(1.16);
+  --glass-blur-soft: blur(14px) saturate(1.1);
 }
 
 :root[data-theme='dark'] {
@@ -515,8 +515,8 @@ textarea.field-input {
 .retro-system-background article[class*='rounded-[1.85rem]'] {
   border-color: rgba(191, 217, 255, 0.58);
   background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.04) 34%, transparent 62%),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.36), rgba(248, 251, 255, 0.22) 52%, rgba(233, 242, 255, 0.14) 100%);
+    linear-gradient(135deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.025) 34%, transparent 62%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.24), rgba(248, 251, 255, 0.13) 52%, rgba(233, 242, 255, 0.08) 100%);
   box-shadow: var(--surface-card-shadow);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
@@ -525,18 +525,18 @@ textarea.field-input {
 .retro-system-background article[class*='rounded-[1.85rem]']:hover {
   border-color: rgba(2, 59, 253, 0.34);
   background:
-    linear-gradient(135deg, rgba(255, 255, 255, 0.25), rgba(255, 255, 255, 0.05) 34%, transparent 62%),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.42), rgba(248, 251, 255, 0.26) 52%, rgba(233, 242, 255, 0.18) 100%);
+    linear-gradient(135deg, rgba(255, 255, 255, 0.18), rgba(255, 255, 255, 0.03) 34%, transparent 62%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.29), rgba(248, 251, 255, 0.16) 52%, rgba(233, 242, 255, 0.1) 100%);
 }
 
 .retro-system-background article[class*='rounded-[1.85rem]'][class*='border-[#023BFD]'] {
   border-color: rgba(2, 59, 253, 0.38);
   background:
-    linear-gradient(135deg, rgba(2, 59, 253, 0.12), rgba(255, 255, 255, 0.24) 32%, rgba(191, 217, 255, 0.16) 100%),
-    linear-gradient(135deg, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0.05) 34%, transparent 62%);
+    linear-gradient(135deg, rgba(2, 59, 253, 0.1), rgba(255, 255, 255, 0.16) 32%, rgba(191, 217, 255, 0.11) 100%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0.03) 34%, transparent 62%);
   box-shadow:
     0 22px 58px rgba(2, 59, 253, 0.16),
-    inset 0 1px 0 rgba(255, 255, 255, 0.72),
+    inset 0 1px 0 rgba(255, 255, 255, 0.5),
     inset 0 -1px 0 rgba(0, 0, 131, 0.06);
 }
 

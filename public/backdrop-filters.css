@@ -1,0 +1,37 @@
+/*
+  Vite/Tailwind's production optimizer can emit only the prefixed
+  backdrop-filter declaration. This public stylesheet is copied as-is so
+  Firefox and the Codex in-app browser keep the frosted glass layer.
+*/
+.glass-panel {
+  backdrop-filter: var(--glass-blur);
+}
+
+.modal-backdrop {
+  backdrop-filter: blur(32px) saturate(1.5);
+}
+
+.modal-frame {
+  backdrop-filter: blur(34px) saturate(1.52);
+}
+
+.field-input {
+  backdrop-filter: blur(16px) saturate(1.08);
+}
+
+.retro-system-background article[class*='rounded-[1.85rem]'] {
+  backdrop-filter: var(--glass-blur);
+}
+
+.retro-system-background section[class*='rounded-[1.1rem]'],
+.retro-system-background div[class*='rounded-[1.5rem]'],
+.retro-system-background div[class*='rounded-[1.2rem]'],
+.retro-system-background div[class*='rounded-[1.05rem]'],
+.retro-system-background div[class*='rounded-[1rem]'],
+.retro-system-background div[class*='rounded-[0.95rem]'] {
+  backdrop-filter: var(--glass-blur-soft);
+}
+
+:root[data-theme='dark'] .modal-backdrop {
+  backdrop-filter: blur(34px) saturate(1.48);
+}
