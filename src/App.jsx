@@ -1497,17 +1497,17 @@ function ConsolidatedPersonnelCard({ person }) {
         {person.assignments.map((assignment) => (
           <span
             key={assignment.id}
-            className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(1.25rem,0.24fr)_minmax(4.85rem,auto)] items-center gap-1"
+            className="flex min-w-0 items-center gap-1"
           >
-            <span className="inline-flex min-w-0 items-center rounded-full bg-[#dfeaff] px-2 py-0.5 text-[11px] font-medium text-[#000083]">
+            <span className="inline-flex min-w-0 max-w-[calc(100%-6.35rem)] items-center rounded-full bg-[#dfeaff] px-2 py-0.5 text-[11px] font-medium text-[#000083]">
               <span className="min-w-0 truncate">
                 <span className="font-semibold">{assignment.role}</span>
                 <span className="mx-1 text-[#023BFD]/28">•</span>
                 <span>{assignment.projectName}</span>
               </span>
             </span>
-            <span aria-hidden="true" className="assignment-leader h-px min-w-3 border-t border-dotted border-[#023BFD]/24" />
-            <OccupationSignalChip occupation={assignment.occupation} signal={assignment.signal} />
+            <span aria-hidden="true" className="assignment-leader h-px min-w-6 flex-1 border-t border-dotted border-[#023BFD]/24" />
+            <OccupationSignalChip occupation={assignment.occupation} signal={assignment.signal} className="shrink-0" />
           </span>
         ))}
       </div>
