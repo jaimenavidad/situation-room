@@ -506,6 +506,22 @@ button {
   border-color: rgba(2, 59, 253, 0.24);
 }
 
+.consolidated-personnel-grid {
+  column-count: 1;
+  column-gap: 0.5rem;
+}
+
+.consolidated-personnel-card {
+  break-inside: avoid;
+  margin-bottom: 0.5rem;
+}
+
+@media (min-width: 1024px) {
+  .consolidated-personnel-grid {
+    column-count: 2;
+  }
+}
+
 textarea.field-input {
   min-height: 4.15rem;
   font-weight: 400;
@@ -816,6 +832,19 @@ textarea.field-input {
 
 :root[data-theme='dark'] .retro-system-background .assignment-leader {
   border-color: rgba(191, 217, 255, 0.22);
+}
+
+:root[data-theme='dark'] .retro-system-background .consolidated-personnel-card [class*='bg-rose-50'],
+:root[data-theme='dark'] .retro-system-background .consolidated-personnel-card [class*='bg-rose-100'] {
+  color: #fecdd3;
+  background-color: rgba(244, 63, 94, 0.26);
+  --tw-ring-color: rgba(251, 113, 133, 0.52);
+  border-color: rgba(251, 113, 133, 0.48);
+}
+
+:root[data-theme='dark'] .retro-system-background .consolidated-personnel-card [class*='bg-rose-500'] {
+  background-color: #fb2c56;
+  box-shadow: 0 0 10px rgba(251, 44, 86, 0.46);
 }
 
 @keyframes overlay-fade-in {

@@ -1453,9 +1453,6 @@ function SummaryCard({ label, value, tone, helper }) {
 }
 
 function ConsolidatedPersonnelPanel({ people }) {
-  const visiblePeople = people.slice(0, 8)
-  const remainingPeople = people.length - visiblePeople.length
-
   return (
     <section className="glass-panel mb-6 rounded-[1.5rem] px-4 py-3.5">
       <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
@@ -1470,16 +1467,11 @@ function ConsolidatedPersonnelPanel({ people }) {
         </span>
       </div>
 
-      {visiblePeople.length ? (
-        <div className="grid gap-2 lg:grid-cols-2">
-          {visiblePeople.map((person) => (
+      {people.length ? (
+        <div className="consolidated-personnel-grid">
+          {people.map((person) => (
             <ConsolidatedPersonnelCard key={person.key} person={person} />
           ))}
-          {remainingPeople > 0 ? (
-            <div className="rounded-[1.05rem] border border-dashed border-[#bfd9ff] bg-white/45 px-3 py-2 text-[11px] font-medium text-slate-500">
-              +{remainingPeople} recursos adicionales en filtros actuales.
-            </div>
-          ) : null}
         </div>
       ) : (
         <div className="rounded-[1.05rem] border border-dashed border-[#bfd9ff] bg-white/45 px-3 py-4 text-sm text-slate-500">
@@ -1491,11 +1483,8 @@ function ConsolidatedPersonnelPanel({ people }) {
 }
 
 function ConsolidatedPersonnelCard({ person }) {
-  const visibleAssignments = person.assignments.slice(0, 3)
-  const remainingAssignments = person.assignments.length - visibleAssignments.length
-
   return (
-    <div className="rounded-[1.05rem] border border-[#bfd9ff] bg-white/74 px-3 py-2.5">
+    <div className="consolidated-personnel-card rounded-[1.05rem] border border-[#bfd9ff] bg-white/74 px-3 py-2.5">
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold leading-5 text-[#000083]">{person.name}</p>
@@ -1504,8 +1493,8 @@ function ConsolidatedPersonnelCard({ person }) {
         <OccupationSignalChip occupation={person.totalOccupation} signal={person.totalSignal} className="min-w-[5.35rem]" />
       </div>
 
-      <div className="mt-2 flex max-h-[5.2rem] flex-col gap-1 overflow-hidden">
-        {visibleAssignments.map((assignment) => (
+      <div className="mt-2 flex flex-col gap-1">
+        {person.assignments.map((assignment) => (
           <span
             key={assignment.id}
             className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(1.25rem,0.24fr)_minmax(4.85rem,auto)] items-center gap-1"
@@ -1521,11 +1510,6 @@ function ConsolidatedPersonnelCard({ person }) {
             <OccupationSignalChip occupation={assignment.occupation} signal={assignment.signal} />
           </span>
         ))}
-        {remainingAssignments > 0 ? (
-          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">
-            +{remainingAssignments} asignaciones mas
-          </span>
-        ) : null}
       </div>
     </div>
   )
