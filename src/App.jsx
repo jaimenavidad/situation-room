@@ -28,9 +28,9 @@ const healthClasses = {
 }
 
 const healthDotClasses = {
-  Verde: 'bg-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.22)]',
-  Amarillo: 'bg-amber-500 shadow-[0_0_20px_rgba(245,158,11,0.22)]',
-  Rojo: 'bg-rose-500 shadow-[0_0_20px_rgba(244,63,94,0.22)]',
+  Verde: 'health-dot--green bg-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.22)]',
+  Amarillo: 'health-dot--amber bg-amber-500 shadow-[0_0_20px_rgba(245,158,11,0.22)]',
+  Rojo: 'health-dot--rose bg-rose-500 shadow-[0_0_20px_rgba(244,63,94,0.22)]',
 }
 
 const controlToneCardClasses = {
@@ -498,6 +498,65 @@ const getOccupationSignal = (value) => {
   }
 }
 
+const formatConsolidatedOccupationValue = (value) => {
+  const normalizedValue = Number.isInteger(value) ? value : Number(value.toFixed(1))
+  return `${normalizedValue}%`
+}
+
+const getPersonnelKey = (name) =>
+  String(name || '')
+    .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+
+const buildConsolidatedPersonnel = (projects) => {
+  const personnelMap = new Map()
+
+  projects.forEach((project) => {
+    project.teamAssigned?.forEach((member) => {
+      const name = member.name?.trim()
+      const role = member.role?.trim() || 'Rol pendiente'
+      const percentage = parseOccupationPercentage(member.dedication) ?? 0
+
+      if (!name) {
+        return
+      }
+
+      const key = getPersonnelKey(name)
+      const current = personnelMap.get(key) || {
+        key,
+        name,
+        totalPercentage: 0,
+        assignments: [],
+      }
+
+      current.totalPercentage += percentage
+      current.assignments.push({
+        id: `${project.id}-${role}-${name}-${member.dedication || '0'}`,
+        projectName: project.name || 'Proyecto sin nombre',
+        role,
+        occupation: formatOccupationValue(member.dedication) || '0%',
+        signal: getOccupationSignal(member.dedication),
+      })
+
+      personnelMap.set(key, current)
+    })
+  })
+
+  return Array.from(personnelMap.values())
+    .map((person) => {
+      const totalOccupation = formatConsolidatedOccupationValue(person.totalPercentage)
+
+      return {
+        ...person,
+        totalOccupation,
+        totalSignal: getOccupationSignal(totalOccupation),
+      }
+    })
+    .sort((first, second) => second.totalPercentage - first.totalPercentage || first.name.localeCompare(second.name))
+}
+
 const getTimelineProgress = (startDate, endDate, referenceDate = new Date()) => {
   const start = parseDateAtStartOfDay(startDate)
   const end = parseDateAtStartOfDay(endDate)
@@ -892,6 +951,7 @@ function App() {
     }),
     {},
   )
+  const consolidatedPersonnel = buildConsolidatedPersonnel(projects)
 
   const updateProject = (projectId, updater) => {
     hasUserMutatedProjectsRef.current = true
@@ -1228,6 +1288,8 @@ function App() {
           <SummaryCard label="Alerta" value={summary.Rojo ?? 0} tone="Rojo" helper="Atencion ejecutiva y plan de contencion." />
         </section>
 
+        <ConsolidatedPersonnelPanel people={consolidatedPersonnel} />
+
         <main className="flex flex-1 flex-col gap-6">
           <section className="flex flex-col">
             <PortfolioPanel
@@ -1370,6 +1432,85 @@ function SummaryCard({ label, value, tone, helper }) {
         <HealthBadge health={tone} />
       </div>
     </article>
+  )
+}
+
+function ConsolidatedPersonnelPanel({ people }) {
+  const visiblePeople = people.slice(0, 8)
+  const remainingPeople = people.length - visiblePeople.length
+
+  return (
+    <section className="glass-panel mb-6 rounded-[1.5rem] px-4 py-3.5">
+      <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#023BFD]/70">Personal consolidado</p>
+          <p className="mt-1 text-xs leading-4 text-slate-600">
+            Ocupacion total por persona en el portafolio activo, con desglose por proyecto.
+          </p>
+        </div>
+        <span className="w-fit rounded-full bg-[#bfd9ff]/55 px-3 py-1 text-[11px] font-semibold text-[#000083] ring-1 ring-inset ring-[#bfd9ff]">
+          {people.length} recursos
+        </span>
+      </div>
+
+      {visiblePeople.length ? (
+        <div className="grid gap-2 lg:grid-cols-2">
+          {visiblePeople.map((person) => (
+            <ConsolidatedPersonnelCard key={person.key} person={person} />
+          ))}
+          {remainingPeople > 0 ? (
+            <div className="rounded-[1.05rem] border border-dashed border-[#bfd9ff] bg-white/45 px-3 py-2 text-[11px] font-medium text-slate-500">
+              +{remainingPeople} recursos adicionales en filtros actuales.
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <div className="rounded-[1.05rem] border border-dashed border-[#bfd9ff] bg-white/45 px-3 py-4 text-sm text-slate-500">
+          No hay personal asignado en los proyectos visibles.
+        </div>
+      )}
+    </section>
+  )
+}
+
+function ConsolidatedPersonnelCard({ person }) {
+  const visibleAssignments = person.assignments.slice(0, 3)
+  const remainingAssignments = person.assignments.length - visibleAssignments.length
+
+  return (
+    <div className="rounded-[1.05rem] border border-[#bfd9ff] bg-white/74 px-3 py-2.5">
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold leading-5 text-[#000083]">{person.name}</p>
+          <p className="text-[10px] uppercase tracking-[0.18em] text-[#023BFD]/55">Ocupacion total</p>
+        </div>
+        <OccupationSignalChip occupation={person.totalOccupation} signal={person.totalSignal} className="min-w-[5.35rem]" />
+      </div>
+
+      <div className="mt-2 flex max-h-[5.2rem] flex-col gap-1 overflow-hidden">
+        {visibleAssignments.map((assignment) => (
+          <span
+            key={assignment.id}
+            className="grid min-w-0 grid-cols-[minmax(0,1fr)_minmax(1.25rem,0.24fr)_minmax(4.85rem,auto)] items-center gap-1"
+          >
+            <span className="inline-flex min-w-0 items-center rounded-full bg-[#dfeaff] px-2 py-0.5 text-[11px] font-medium text-[#000083]">
+              <span className="min-w-0 truncate">
+                <span className="font-semibold">{assignment.role}</span>
+                <span className="mx-1 text-[#023BFD]/28">•</span>
+                <span>{assignment.projectName}</span>
+              </span>
+            </span>
+            <span aria-hidden="true" className="assignment-leader h-px min-w-3 border-t border-dotted border-[#023BFD]/24" />
+            <OccupationSignalChip occupation={assignment.occupation} signal={assignment.signal} />
+          </span>
+        ))}
+        {remainingAssignments > 0 ? (
+          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">
+            +{remainingAssignments} asignaciones mas
+          </span>
+        ) : null}
+      </div>
+    </div>
   )
 }
 
@@ -1517,7 +1658,7 @@ function PortfolioProjectCard({ project, isSelected, onOpenDetail }) {
             <CompactStrip
               label="Objetivos actuales"
               value={project.currentObjective || project.description || 'Sin objetivos actuales definidos.'}
-              variant="bullets"
+              variant="objectives"
             />
           </div>
         </div>
@@ -1594,7 +1735,7 @@ function CompactDatesFact({ startDate, endDate }) {
   ]
 
   return (
-    <div className="rounded-[1.05rem] bg-[#f8fbff]/88 px-3.5 py-2.5 ring-1 ring-inset ring-[#bfd9ff] md:col-span-2 xl:col-span-2">
+    <div className="rounded-[1.05rem] border border-[#bfd9ff] bg-white/74 px-3.5 py-2.5 md:col-span-2 xl:col-span-2">
       <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#023BFD]/70">Fechas</p>
       <div className="mt-1.5 flex max-h-[2.2rem] flex-col gap-0.5 overflow-hidden text-[11px] leading-4 text-slate-500">
         {dateItems.map((item) => (
@@ -1614,7 +1755,7 @@ function CompactPersonnelFacts({ items }) {
   const remainingCount = items.length - visibleItems.length
 
   return (
-    <div className="rounded-[1.05rem] bg-[#f8fbff]/88 px-3.5 py-2.5 ring-1 ring-inset ring-[#bfd9ff] md:col-span-2 xl:col-span-2">
+    <div className="rounded-[1.05rem] border border-[#bfd9ff] bg-white/74 px-3.5 py-2.5 md:col-span-2 xl:col-span-2">
       <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#023BFD]/70">Personal asignado</p>
       {visibleItems.length ? (
         <div className="mt-1.5 flex max-h-[2.2rem] flex-wrap items-center gap-x-2 gap-y-0.5 overflow-hidden text-[11px] leading-4 text-slate-500">
@@ -1636,7 +1777,7 @@ function CompactPersonnelFacts({ items }) {
   )
 }
 
-const compactBulletItems = (value) => {
+const compactBulletItems = (value, limit = 3) => {
   const normalizedValue = String(value || '').trim()
 
   if (!normalizedValue) {
@@ -1647,15 +1788,17 @@ const compactBulletItems = (value) => {
     .split(/\n|•|;|\s+-\s+/)
     .map((item) => item.replace(/^[\s*-]+/, '').replace(/^\d+[.)]\s*/, '').trim())
     .filter(Boolean)
-    .slice(0, 3)
+    .slice(0, limit)
 }
 
 function CompactStrip({ label, value, variant = 'text' }) {
-  const isBulletVariant = variant === 'bullets' || variant === 'watch'
-  const bulletItems = isBulletVariant ? compactBulletItems(value) : []
+  const isBulletVariant = variant === 'bullets' || variant === 'objectives' || variant === 'watch'
+  const bulletItems = isBulletVariant ? compactBulletItems(value, variant === 'objectives' ? 2 : 3) : []
   const bulletListClass =
     variant === 'watch'
       ? 'mt-1 flex max-h-[4.55rem] flex-col gap-0.5 overflow-hidden text-[11px] leading-4 text-slate-600'
+      : variant === 'objectives'
+        ? 'mt-1 flex max-h-[2.35rem] flex-col gap-0.5 overflow-hidden text-[11px] leading-4 text-slate-600'
       : 'mt-1 flex max-h-[3rem] flex-col gap-0.5 overflow-hidden text-[11px] leading-4 text-slate-600'
   const bulletTextClass = variant === 'watch' ? 'line-clamp-2 min-w-0' : 'line-clamp-1 min-w-0'
 
@@ -1686,7 +1829,7 @@ function LabelCluster({ label, items, subtle = false }) {
         {items.slice(0, 8).map((item) => (
           <span
             key={`${label}-${item}`}
-            className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
+            className={`tech-chip rounded-full px-2 py-0.5 text-[11px] font-medium ${
               subtle ? 'bg-[#edf4ff] text-[#294b91]' : 'bg-[#dfeaff] text-[#000083]'
             }`}
           >
@@ -1694,25 +1837,39 @@ function LabelCluster({ label, items, subtle = false }) {
           </span>
         ))}
         {items.length > 8 ? (
-          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">+{items.length - 8}</span>
+          <span className="tech-chip rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">+{items.length - 8}</span>
         ) : null}
       </div>
     </div>
   )
 }
 
+function OccupationSignalChip({ occupation, signal, className = '' }) {
+  const barWidth = `${Math.min(Math.max(signal.percentage, 4), 100)}%`
+
+  return (
+    <span
+      className={`inline-flex min-w-0 items-center justify-between gap-1 rounded-full px-1.5 py-0.5 text-[11px] font-medium ring-1 ring-inset ${signal.chipClass} ${className}`}
+      title={`${occupation} · ${signal.label}`}
+    >
+      <span className="shrink-0 font-semibold tabular-nums">{occupation}</span>
+      <span className={`h-1 min-w-4 flex-1 overflow-hidden rounded-full ${signal.trackClass}`}>
+        <span className={`block h-full rounded-full ${signal.barClass}`} style={{ width: barWidth }} />
+      </span>
+    </span>
+  )
+}
+
 function OccupationCluster({ items }) {
-  const visibleItems = items.slice(0, 5)
+  const visibleItems = items.slice(0, 3)
   const remainingCount = items.length - visibleItems.length
 
   return (
     <div className="rounded-[1.05rem] border border-[#bfd9ff] bg-white/72 px-3.5 py-2.5">
       <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#023BFD]/70">Ocupacion %</p>
       {visibleItems.length ? (
-        <div className="mt-1.5 flex max-h-[3.4rem] flex-col gap-1 overflow-hidden">
+        <div className="mt-1.5 flex max-h-[5.1rem] flex-col gap-1 overflow-hidden">
           {visibleItems.map((item) => {
-            const barWidth = `${Math.min(Math.max(item.signal.percentage, 4), 100)}%`
-
             return (
               <span
                 key={`${item.name}-${item.role}-${item.occupation}`}
@@ -1725,15 +1882,7 @@ function OccupationCluster({ items }) {
                     <span>{item.name}</span>
                   </span>
                 </span>
-                <span
-                  className={`inline-flex min-w-0 items-center justify-between gap-1 rounded-full px-1.5 py-0.5 text-[11px] font-medium ring-1 ring-inset ${item.signal.chipClass}`}
-                  title={`${item.occupation} · ${item.signal.label}`}
-                >
-                  <span className="shrink-0 font-semibold tabular-nums">{item.occupation}</span>
-                  <span className={`h-1 min-w-4 flex-1 overflow-hidden rounded-full ${item.signal.trackClass}`}>
-                    <span className={`block h-full rounded-full ${item.signal.barClass}`} style={{ width: barWidth }} />
-                  </span>
-                </span>
+                <OccupationSignalChip occupation={item.occupation} signal={item.signal} />
               </span>
             )
           })}
@@ -1813,15 +1962,17 @@ function ProgressDonut({ progress, size = 78, strokeWidth = 8, caption = 'elapse
 
   const theme = ringThemes[progress.tier] || ringThemes.early
   const radius = (size - strokeWidth) / 2
+  const outerBoundaryRadius = size / 2 - 0.75
+  const innerBoundaryRadius = Math.max(radius - strokeWidth / 2 + 0.75, 1)
   const circumference = 2 * Math.PI * radius
   const offset = circumference - (progress.percentage / 100) * circumference
 
   return (
     <div
-      className={`relative shrink-0 rounded-full bg-[radial-gradient(circle_at_30%_25%,rgba(255,255,255,0.98),rgba(238,245,255,0.82)_60%,rgba(223,234,255,0.4)_100%)] ${theme.glow}`}
+      className={`progress-donut relative shrink-0 rounded-full bg-[radial-gradient(circle_at_30%_25%,rgba(255,255,255,0.98),rgba(238,245,255,0.82)_60%,rgba(223,234,255,0.4)_100%)] ${theme.glow}`}
       style={{ width: size, height: size }}
     >
-      <svg className="-rotate-90" width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
+      <svg className="relative z-10 -rotate-90" width={size} height={size} viewBox={`0 0 ${size} ${size}`} aria-hidden="true">
         <circle
           cx={size / 2}
           cy={size / 2}
@@ -1841,9 +1992,25 @@ function ProgressDonut({ progress, size = 78, strokeWidth = 8, caption = 'elapse
           strokeDasharray={circumference}
           strokeDashoffset={offset}
         />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={outerBoundaryRadius}
+          fill="none"
+          stroke="var(--donut-ring-outer)"
+          strokeWidth="1"
+        />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={innerBoundaryRadius}
+          fill="none"
+          stroke="var(--donut-ring-inner)"
+          strokeWidth="1"
+        />
       </svg>
 
-      <div className="absolute inset-0 flex flex-col items-center justify-center">
+      <div className="absolute inset-0 z-20 flex flex-col items-center justify-center">
         <span className={`font-display leading-none ${compactText ? 'text-[0.52rem]' : 'text-[0.95rem]'} ${theme.text}`}>
           {progress.percentage}%
         </span>
@@ -2854,7 +3021,7 @@ function SelectField({ label, value, options, onChange }) {
 function HealthBadge({ health }) {
   return (
     <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold ${healthClasses[health]}`}>
-      <span className={`h-2.5 w-2.5 rounded-full ${healthDotClasses[health]}`}></span>
+      <span className={`health-dot h-2.5 w-2.5 rounded-full ${healthDotClasses[health]}`}></span>
       {health}
     </span>
   )
